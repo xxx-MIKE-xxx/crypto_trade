@@ -5,6 +5,11 @@ Solana token risk/security report — production data component.
 Risk score convention: 0 = lowest risk, 100 = highest risk.
 
 Examples:
+    # Human-readable display, like the original prototype
+    python solana_risk_report.py --mint <MINT>
+
+    # Machine-friendly outputs for pipelines
+    python solana_risk_report.py --mint <MINT> --machine --format json
     python solana_risk_report.py --mint <MINT> --format jsonl --out data/solana_risk_reports.jsonl --append
     python solana_risk_report.py --mint <MINT> --format csv --out data/features.csv --append
     python solana_risk_report.py --mint <MINT> --format parquet --out data/features.parquet
@@ -1542,15 +1547,22 @@ def _write_parquet_row(path: Path, row: FeatureRow) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Human-readable output (optional)
+# Human-readable output
 # ---------------------------------------------------------------------------
 
 
 def print_human(report: StandardRiskReport) -> None:
-    """Print a human-readable summary (optional CLI mode)."""
-    d = report.to_dict()
+    """Print a human-readable summary."""
     print("\n=== Solana Token Risk Report ===")
+
+    symbol = report.token.get("symbol")
+    name = report.token.get("name")
+    label = f"{symbol} ({name})" if symbol and name else symbol or name
+
     print(f"Token: {report.token.get('mint')}")
+    if label:
+        print(f"Name: {label}")
+
     overall = report.overall
     print(
         f"Overall risk: {overall.get('risk_score')} / 100 "
@@ -1561,28 +1573,52 @@ def print_human(report: StandardRiskReport) -> None:
 
     print("\nSource status:")
     for src, status in report.source_status.items():
-        ok = "ok" if status.get("success") else "fail"
-        print(f"  - {src}: {ok} (available={status.get('available')})")
+        if status.get("success"):
+            print(
+                f"  - {src}: ok "
+                f"(latency_ms={status.get('latency_ms')}, http_status={status.get('http_status')})"
+            )
+        elif status.get("attempted"):
+            print(
+                f"  - {src}: failed "
+                f"({status.get('error_type')}: {status.get('error_message')})"
+            )
+        else:
+            print(f"  - {src}: skipped ({status.get('error_message')})")
 
-    print("\nCategory scores:")
+    print("\nSub-category scores:")
     for name, cat in report.categories.items():
-        print(f"  {name}: {cat.get('score')} / 100 ({cat.get('level')})")
+        print(f"\n  {name}: {cat.get('score')} / 100 ({cat.get('level')})")
+        metrics = cat.get("metrics") or {}
+        for metric_name, value in metrics.items():
+            print(f"    - {metric_name}: {value}")
 
     if report.warnings:
-        print("\nWarnings:")
+        print("\nTop warnings:")
         for w in report.warnings[:12]:
-            print(f"  - [{w.get('severity')}] {w.get('code')}: {w.get('message')}")
+            print(
+                f"  - [{w.get('severity')}] {w.get('code')}: "
+                f"{w.get('message')} (value={w.get('value')})"
+            )
 
     liq = report.categories.get("liquidity_health", {}).get("metrics", {})
     trading = report.categories.get("trading_behavior", {}).get("metrics", {})
-    print("\nMarket metrics:")
-    print(f"  Pair count: {liq.get('pair_count')}")
-    print(f"  Total liquidity USD: {liq.get('total_liquidity_usd')}")
-    print(f"  24h buys/sells: {trading.get('h24_buys')}/{trading.get('h24_sells')}")
-    print(f"  24h volume USD: {trading.get('h24_volume_usd')}")
-    print(f"  24h price change %: {trading.get('h24_price_change_pct')}")
 
-    print("\nSchema:", d.get("schema_version"))
+    print("\nMarket snapshot:")
+    print(f"  Pair count: {liq.get('pair_count')}")
+    print(f"  Total liquidity: {liq.get('total_liquidity_usd')}")
+    print(f"  Top pair liquidity: {liq.get('top_pair_liquidity_usd')}")
+    print(f"  Newest pair age hours: {liq.get('newest_pair_age_hours')}")
+    print(f"  24h buys/sells: {trading.get('h24_buys')}/{trading.get('h24_sells')}")
+    print(f"  24h volume: {trading.get('h24_volume_usd')}")
+    print(f"  24h price change: {trading.get('h24_price_change_pct')}%")
+
+    print("\nSchema:", report.schema_version)
+    print(
+        "\nDisclaimer: This is a heuristic risk screen, not financial advice "
+        "and not a guarantee. Always inspect raw API reports, liquidity lockers, "
+        "deployer wallets, and recent transactions."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1597,19 +1633,57 @@ def _resolve_mint(args: argparse.Namespace) -> str:
     return mint.strip()
 
 
+def _format_was_explicit(argv: Sequence[str]) -> bool:
+    return any(arg == "--format" or arg.startswith("--format=") for arg in argv)
+
+
+def _print_machine_stdout(report: StandardRiskReport, fmt: str, *, pretty: bool) -> int:
+    fmt_lower = fmt.lower()
+
+    if fmt_lower == "json":
+        indent = 2 if pretty else None
+        text = json.dumps(report.to_dict(), indent=indent, ensure_ascii=False, default=json_default)
+        try:
+            sys.stdout.buffer.write(text.encode("utf-8"))
+            sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
+        except (AttributeError, OSError):
+            print(text)
+        return 0
+
+    if fmt_lower == "jsonl":
+        text = json.dumps(report.to_dict(), ensure_ascii=False, default=json_default)
+        print(text)
+        return 0
+
+    if fmt_lower == "csv":
+        row = flatten_report(report)
+        writer = csv.DictWriter(sys.stdout, fieldnames=list(row.keys()))
+        writer.writeheader()
+        writer.writerow(row)
+        return 0
+
+    if fmt_lower == "parquet":
+        print("Parquet cannot be written to stdout. Use --out <path>.", file=sys.stderr)
+        return 1
+
+    print(f"Unsupported format: {fmt}", file=sys.stderr)
+    return 1
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Solana token risk report — standardized machine-readable output.",
+        description="Solana token risk report with human display and machine-readable exports.",
     )
     parser.add_argument("mint_positional", nargs="?", help="Solana token mint address")
     parser.add_argument("--mint", dest="mint", help="Solana token mint address")
     parser.add_argument(
         "--format",
         choices=["json", "jsonl", "csv", "parquet"],
-        default="json",
-        help="Output format (default: json)",
+        default=None,
+        help="Machine-readable output format. Default is json when --out or --machine is used.",
     )
-    parser.add_argument("--out", help="Output file path")
+    parser.add_argument("--out", help="Output file path for machine-readable export")
     parser.add_argument("--append", action="store_true", help="Append to JSONL/CSV output")
     parser.add_argument("--no-raw", action="store_true", help="Exclude raw vendor payloads")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
@@ -1622,7 +1696,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--human",
         action="store_true",
-        help="Print human-readable summary instead of JSON",
+        help="Force human-readable summary. This is already the default when not exporting.",
+    )
+    parser.add_argument(
+        "--machine",
+        action="store_true",
+        help="Print machine-readable output to stdout instead of the human summary.",
     )
     parser.add_argument(
         "-v",
@@ -1634,6 +1713,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
@@ -1643,6 +1724,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     mint = _resolve_mint(args)
+    output_format = args.format or "json"
+    explicit_machine_request = args.machine or _format_was_explicit(raw_argv)
+
     config = ReportConfig.from_env(timeout=args.timeout, include_raw=not args.no_raw)
 
     logger.info("Building risk report for mint=%s", mint)
@@ -1652,39 +1736,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         validate_report_schema(report)
         logger.info("Schema validation passed")
 
-    if args.human:
-        print_human(report)
-        return 0
-
     if args.out:
         try:
             write_report(
                 report,
                 args.out,
-                args.format,
+                output_format,
                 append=args.append,
                 pretty=args.pretty,
             )
         except (ImportError, NotImplementedError) as e:
             print(str(e), file=sys.stderr)
             return 1
-        logger.info("Wrote %s report to %s", args.format, args.out)
-        if args.format == "json":
-            print(f"Wrote JSON report to {args.out}")
-        else:
-            print(f"Wrote {args.format.upper()} report to {args.out}")
+
+        logger.info("Wrote %s report to %s", output_format, args.out)
+        print(f"Wrote {output_format.upper()} report to {args.out}")
+
+        if args.human:
+            print_human(report)
+
         return 0
 
-    payload = report.to_dict()
-    indent = 2 if args.pretty else None
-    text = json.dumps(payload, indent=indent, ensure_ascii=False, default=json_default)
-    try:
-        sys.stdout.buffer.write(text.encode("utf-8"))
-        sys.stdout.buffer.write(b"\n")
-        sys.stdout.buffer.flush()
-    except (AttributeError, OSError):
-        print(text)
-    return 0
+    if args.human or not explicit_machine_request:
+        print_human(report)
+        return 0
+
+    return _print_machine_stdout(report, output_format, pretty=args.pretty)
 
 
 if __name__ == "__main__":
