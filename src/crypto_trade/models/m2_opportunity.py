@@ -1,0 +1,1 @@
+"""M2: discover trading opportunities within coins accepted by M1."""

@@ -1,0 +1,1 @@
+"""M4: rank opportunities and choose position sizing."""

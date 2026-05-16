@@ -36,3 +36,13 @@ data/reports/
 Thumbs.db
 .vscode/
 .idea/
+
+data/models/
+*.pkl
+*.joblib
+*.onnx
+
+
+# Python package build metadata
+*.egg-info/
+

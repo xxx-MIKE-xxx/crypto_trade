@@ -1,0 +1,1 @@
+"""M3: quantify the quality of an opportunity discovered by M2."""

@@ -41,3 +41,9 @@ target-version = "py311"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+[project.scripts]
+capture-coin = "crypto_trade.ingest.onchain:main"
+run-stream = "crypto_trade.ingest.pumpportal:main"
+probe-dexscreener = "crypto_trade.ingest.dexscreener:main"
+score-token-risk = "crypto_trade.features.token_risk:main"
+grade-website = "crypto_trade.features.alt_data:main"
