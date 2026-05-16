@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crypto-trade"
+version = "0.1.0"
+description = "Quant research and trading system for post-migration Solana meme coins."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "requests",
+    "websockets",
+    "python-dotenv",
+    "pandas",
+    "pyarrow",
+    "pyyaml",
+    "pydantic",
+    "beautifulsoup4"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy"
+]
+
+website = [
+    "pillow",
+    "playwright"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

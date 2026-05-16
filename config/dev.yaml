@@ -1,0 +1,8 @@
+﻿environment: dev
+log_level: INFO
+paper_trading: true
+
+paths:
+  data_dir: data
+  raw_dir: data/raw
+  reports_dir: data/reports

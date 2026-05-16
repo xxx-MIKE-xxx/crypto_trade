@@ -1,0 +1,38 @@
+.env
+# Secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local data
+data/raw/
+data/bronze/
+data/silver/
+data/features/
+data/labels/
+data/reports/
+*.parquet
+*.jsonl
+*.sqlite
+*.db
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

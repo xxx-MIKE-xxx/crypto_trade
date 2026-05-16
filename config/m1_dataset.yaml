@@ -1,0 +1,11 @@
+﻿prediction_horizons_hours: [6, 12, 24]
+
+m1_target:
+  min_market_cap_usd: 100000
+  min_liquidity_usd: 20000
+  min_volume_usd: 50000
+
+validation:
+  method: walk_forward
+  train_days: 30
+  test_days: 7

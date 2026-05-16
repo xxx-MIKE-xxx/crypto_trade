@@ -1,0 +1,17 @@
+requests
+websockets
+python-dotenv
+pandas
+pyarrow
+pyyaml
+pydantic
+beautifulsoup4
+
+[dev]
+pytest
+ruff
+mypy
+
+[website]
+pillow
+playwright

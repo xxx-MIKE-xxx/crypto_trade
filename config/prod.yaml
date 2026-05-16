@@ -1,0 +1,8 @@
+﻿environment: prod
+log_level: INFO
+paper_trading: false
+
+risk_limits:
+  max_position_sol: 0.1
+  max_daily_loss_sol: 0.5
+  max_open_positions: 3

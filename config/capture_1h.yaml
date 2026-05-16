@@ -1,0 +1,6 @@
+﻿duration_seconds: 3600
+poll_seconds: 5
+snapshot_seconds: 30
+backfill_limit: 100
+max_tx_attempts: 5
+rpc_min_interval: 0.2
