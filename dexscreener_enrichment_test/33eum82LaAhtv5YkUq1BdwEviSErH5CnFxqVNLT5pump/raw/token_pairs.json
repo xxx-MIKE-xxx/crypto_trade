@@ -1,0 +1,664 @@
+{
+  "body": [
+    {
+      "baseToken": {
+        "address": "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump",
+        "name": "World Cup Coin",
+        "symbol": "WORLDCUP"
+      },
+      "chainId": "solana",
+      "dexId": "pumpswap",
+      "fdv": 1849347,
+      "info": {
+        "header": "https://cdn.dexscreener.com/cms/images/hI_R5hhwN3fZjwKm?width=1500&height=500&quality=95&format=auto",
+        "imageUrl": "https://cdn.dexscreener.com/cms/images/F3H3l8fxpmRPX-yq?width=800&height=800&quality=95&format=auto",
+        "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump?timestamp=1778959800000",
+        "socials": [
+          {
+            "type": "twitter",
+            "url": "https://x.com/WorldCupCoinsPF"
+          }
+        ],
+        "websites": [
+          {
+            "label": "Website",
+            "url": "https://worldcupcoins.org"
+          }
+        ]
+      },
+      "liquidity": {
+        "base": 36223330,
+        "quote": 776.1391,
+        "usd": 134349.33
+      },
+      "marketCap": 1849347,
+      "pairAddress": "ETMhxtENfkMK85TAcveEbZdBv9htziWzDSddmShRP2wB",
+      "pairCreatedAt": 1778531910000,
+      "priceChange": {
+        "h1": -2.59,
+        "h24": -5.47,
+        "h6": -6.89,
+        "m5": -4.8
+      },
+      "priceNative": "0.00002131",
+      "priceUsd": "0.001849",
+      "quoteToken": {
+        "address": "So11111111111111111111111111111111111111112",
+        "name": "Wrapped SOL",
+        "symbol": "SOL"
+      },
+      "txns": {
+        "h1": {
+          "buys": 54,
+          "sells": 57
+        },
+        "h24": {
+          "buys": 2662,
+          "sells": 2364
+        },
+        "h6": {
+          "buys": 694,
+          "sells": 646
+        },
+        "m5": {
+          "buys": 16,
+          "sells": 9
+        }
+      },
+      "url": "https://dexscreener.com/solana/etmhxtenfkmk85tacveebzdbv9htziwzdsddmshrp2wb",
+      "volume": {
+        "h1": 17524.35,
+        "h24": 496144.62,
+        "h6": 147169.71,
+        "m5": 6806.95
+      }
+    },
+    {
+      "baseToken": {
+        "address": "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump",
+        "name": "World Cup Coin",
+        "symbol": "WORLDCUP"
+      },
+      "chainId": "solana",
+      "dexId": "meteora",
+      "fdv": 1843831,
+      "info": {
+        "header": "https://cdn.dexscreener.com/cms/images/hI_R5hhwN3fZjwKm?width=1500&height=500&quality=95&format=auto",
+        "imageUrl": "https://cdn.dexscreener.com/cms/images/F3H3l8fxpmRPX-yq?width=800&height=800&quality=95&format=auto",
+        "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump?timestamp=1778959800000",
+        "socials": [
+          {
+            "type": "twitter",
+            "url": "https://x.com/WorldCupCoinsPF"
+          }
+        ],
+        "websites": [
+          {
+            "label": "Website",
+            "url": "https://worldcupcoins.org"
+          }
+        ]
+      },
+      "labels": [
+        "DLMM"
+      ],
+      "liquidity": {
+        "base": 13891801,
+        "quote": 1139.7783,
+        "usd": 124537.6
+      },
+      "marketCap": 1843831,
+      "pairAddress": "8UYCgRrxZc3XKY8PBJDSKubAUP4mpbxoj1EZJ7A5G9wy",
+      "pairCreatedAt": 1778585426000,
+      "priceChange": {
+        "h1": -3.15,
+        "h24": -7.04,
+        "h6": -7.19,
+        "m5": -5.85
+      },
+      "priceNative": "0.00002124",
+      "priceUsd": "0.001843",
+      "quoteToken": {
+        "address": "So11111111111111111111111111111111111111112",
+        "name": "Wrapped SOL",
+        "symbol": "SOL"
+      },
+      "txns": {
+        "h1": {
+          "buys": 49,
+          "sells": 35
+        },
+        "h24": {
+          "buys": 1092,
+          "sells": 827
+        },
+        "h6": {
+          "buys": 300,
+          "sells": 198
+        },
+        "m5": {
+          "buys": 4,
+          "sells": 8
+        }
+      },
+      "url": "https://dexscreener.com/solana/8uycgrrxzc3xky8pbjdskubaup4mpbxoj1ezj7a5g9wy",
+      "volume": {
+        "h1": 21369.52,
+        "h24": 398252.23,
+        "h6": 105729.94,
+        "m5": 4795.16
+      }
+    },
+    {
+      "baseToken": {
+        "address": "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump",
+        "name": "World Cup Coin",
+        "symbol": "WORLDCUP"
+      },
+      "chainId": "solana",
+      "dexId": "meteora",
+      "fdv": 1857846,
+      "info": {
+        "header": "https://cdn.dexscreener.com/cms/images/hI_R5hhwN3fZjwKm?width=1500&height=500&quality=95&format=auto",
+        "imageUrl": "https://cdn.dexscreener.com/cms/images/F3H3l8fxpmRPX-yq?width=800&height=800&quality=95&format=auto",
+        "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump?timestamp=1778959800000",
+        "socials": [
+          {
+            "type": "twitter",
+            "url": "https://x.com/WorldCupCoinsPF"
+          }
+        ],
+        "websites": [
+          {
+            "label": "Website",
+            "url": "https://worldcupcoins.org"
+          }
+        ]
+      },
+      "labels": [
+        "DLMM"
+      ],
+      "liquidity": {
+        "base": 729075,
+        "quote": 40.9528,
+        "usd": 4908.92
+      },
+      "marketCap": 1857846,
+      "pairAddress": "8pKt3mAE3KVYCLCGWBMKScxoZ4EfzKEReGudVbJZG45N",
+      "pairCreatedAt": 1778655180000,
+      "priceChange": {
+        "h1": -2.01,
+        "h24": -5.84,
+        "h6": -6.21,
+        "m5": -4.96
+      },
+      "priceNative": "0.00002140",
+      "priceUsd": "0.001857",
+      "quoteToken": {
+        "address": "So11111111111111111111111111111111111111112",
+        "name": "Wrapped SOL",
+        "symbol": "SOL"
+      },
+      "txns": {
+        "h1": {
+          "buys": 64,
+          "sells": 64
+        },
+        "h24": {
+          "buys": 1774,
+          "sells": 1944
+        },
+        "h6": {
+          "buys": 579,
+          "sells": 555
+        },
+        "m5": {
+          "buys": 7,
+          "sells": 15
+        }
+      },
+      "url": "https://dexscreener.com/solana/8pkt3mae3kvyclcgwbmkscxoz4efzkeregudvbjzg45n",
+      "volume": {
+        "h1": 3309.32,
+        "h24": 68467.3,
+        "h6": 30899.53,
+        "m5": 449.66
+      }
+    },
+    {
+      "baseToken": {
+        "address": "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump",
+        "name": "World Cup Coin",
+        "symbol": "WORLDCUP"
+      },
+      "chainId": "solana",
+      "dexId": "orca",
+      "fdv": 1859991,
+      "info": {
+        "header": "https://cdn.dexscreener.com/cms/images/hI_R5hhwN3fZjwKm?width=1500&height=500&quality=95&format=auto",
+        "imageUrl": "https://cdn.dexscreener.com/cms/images/F3H3l8fxpmRPX-yq?width=800&height=800&quality=95&format=auto",
+        "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump?timestamp=1778959800000",
+        "socials": [
+          {
+            "type": "twitter",
+            "url": "https://x.com/WorldCupCoinsPF"
+          }
+        ],
+        "websites": [
+          {
+            "label": "Website",
+            "url": "https://worldcupcoins.org"
+          }
+        ]
+      },
+      "labels": [
+        "wp"
+      ],
+      "liquidity": {
+        "base": 249587,
+        "quote": 1.5369,
+        "usd": 597.65
+      },
+      "marketCap": 1859991,
+      "pairAddress": "B38SV68KyedsyqK3EuavzL7TJLcHo5mzZsJoTrg3CfPu",
+      "pairCreatedAt": 1778586738000,
+      "priceChange": {
+        "h1": -1.76,
+        "h24": -5.07,
+        "h6": -6.53,
+        "m5": -4.67
+      },
+      "priceNative": "0.00002143",
+      "priceUsd": "0.001860",
+      "quoteToken": {
+        "address": "So11111111111111111111111111111111111111112",
+        "name": "Wrapped SOL",
+        "symbol": "SOL"
+      },
+      "txns": {
+        "h1": {
+          "buys": 19,
+          "sells": 23
+        },
+        "h24": {
+          "buys": 358,
+          "sells": 386
+        },
+        "h6": {
+          "buys": 93,
+          "sells": 124
+        },
+        "m5": {
+          "buys": 0,
+          "sells": 7
+        }
+      },
+      "url": "https://dexscreener.com/solana/b38sv68kyedsyqk3euavzl7tjlcho5mzzsjotrg3cfpu",
+      "volume": {
+        "h1": 91.2,
+        "h24": 1507.15,
+        "h6": 401.62,
+        "m5": 17.83
+      }
+    },
+    {
+      "baseToken": {
+        "address": "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump",
+        "name": "World Cup Coin",
+        "symbol": "WORLDCUP"
+      },
+      "chainId": "solana",
+      "dexId": "meteora",
+      "fdv": 1915833,
+      "info": {
+        "header": "https://cdn.dexscreener.com/cms/images/hI_R5hhwN3fZjwKm?width=1500&height=500&quality=95&format=auto",
+        "imageUrl": "https://cdn.dexscreener.com/cms/images/F3H3l8fxpmRPX-yq?width=800&height=800&quality=95&format=auto",
+        "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump?timestamp=1778959800000",
+        "socials": [
+          {
+            "type": "twitter",
+            "url": "https://x.com/WorldCupCoinsPF"
+          }
+        ],
+        "websites": [
+          {
+            "label": "Website",
+            "url": "https://worldcupcoins.org"
+          }
+        ]
+      },
+      "labels": [
+        "DLMM"
+      ],
+      "liquidity": {
+        "base": 5357.8835,
+        "quote": 0.03169,
+        "usd": 13.01
+      },
+      "marketCap": 1915833,
+      "pairAddress": "G2bixeNqjxFFfPd2fmqxP3uevVYSBAWwrZ9FJoKE4G1E",
+      "pairCreatedAt": 1778667739000,
+      "priceChange": {
+        "h1": 2.74,
+        "h24": -2.63,
+        "h6": -7.46
+      },
+      "priceNative": "0.00002207",
+      "priceUsd": "0.001915",
+      "quoteToken": {
+        "address": "So11111111111111111111111111111111111111112",
+        "name": "Wrapped SOL",
+        "symbol": "SOL"
+      },
+      "txns": {
+        "h1": {
+          "buys": 2,
+          "sells": 0
+        },
+        "h24": {
+          "buys": 16,
+          "sells": 30
+        },
+        "h6": {
+          "buys": 3,
+          "sells": 9
+        },
+        "m5": {
+          "buys": 0,
+          "sells": 0
+        }
+      },
+      "url": "https://dexscreener.com/solana/g2bixenqjxfffpd2fmqxp3uevvysbawwrz9fjoke4g1e",
+      "volume": {
+        "h1": 0.09,
+        "h24": 5.07,
+        "h6": 1.13,
+        "m5": 0
+      }
+    },
+    {
+      "baseToken": {
+        "address": "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump",
+        "name": "World Cup Coin",
+        "symbol": "WORLDCUP"
+      },
+      "chainId": "solana",
+      "dexId": "meteora",
+      "fdv": 1816677,
+      "info": {
+        "header": "https://cdn.dexscreener.com/cms/images/hI_R5hhwN3fZjwKm?width=1500&height=500&quality=95&format=auto",
+        "imageUrl": "https://cdn.dexscreener.com/cms/images/F3H3l8fxpmRPX-yq?width=800&height=800&quality=95&format=auto",
+        "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump?timestamp=1778959800000",
+        "socials": [
+          {
+            "type": "twitter",
+            "url": "https://x.com/WorldCupCoinsPF"
+          }
+        ],
+        "websites": [
+          {
+            "label": "Website",
+            "url": "https://worldcupcoins.org"
+          }
+        ]
+      },
+      "labels": [
+        "DYN2"
+      ],
+      "liquidity": {
+        "base": 9241.04963,
+        "quote": 0.1951,
+        "usd": 33.71
+      },
+      "marketCap": 1816677,
+      "pairAddress": "7W7uEYXWdNs1esvV5p9NUbFudJhSvLSqerU64HEgyWUf",
+      "pairCreatedAt": 1778605252000,
+      "priceChange": {
+        "h1": 3.32,
+        "h24": -11.96,
+        "h6": -10.1
+      },
+      "priceNative": "0.00002094",
+      "priceUsd": "0.001816",
+      "quoteToken": {
+        "address": "So11111111111111111111111111111111111111112",
+        "name": "Wrapped SOL",
+        "symbol": "SOL"
+      },
+      "txns": {
+        "h1": {
+          "buys": 3,
+          "sells": 0
+        },
+        "h24": {
+          "buys": 25,
+          "sells": 29
+        },
+        "h6": {
+          "buys": 4,
+          "sells": 12
+        },
+        "m5": {
+          "buys": 0,
+          "sells": 0
+        }
+      },
+      "url": "https://dexscreener.com/solana/7w7ueyxwdns1esvv5p9nubfudjhsvlsqeru64hegywuf",
+      "volume": {
+        "h1": 0.22,
+        "h24": 6.15,
+        "h6": 1.54,
+        "m5": 0
+      }
+    },
+    {
+      "baseToken": {
+        "address": "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump",
+        "name": "World Cup Coin",
+        "symbol": "WORLDCUP"
+      },
+      "chainId": "solana",
+      "dexId": "meteora",
+      "fdv": 1815419,
+      "info": {
+        "header": "https://cdn.dexscreener.com/cms/images/hI_R5hhwN3fZjwKm?width=1500&height=500&quality=95&format=auto",
+        "imageUrl": "https://cdn.dexscreener.com/cms/images/F3H3l8fxpmRPX-yq?width=800&height=800&quality=95&format=auto",
+        "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump?timestamp=1778959800000",
+        "socials": [
+          {
+            "type": "twitter",
+            "url": "https://x.com/WorldCupCoinsPF"
+          }
+        ],
+        "websites": [
+          {
+            "label": "Website",
+            "url": "https://worldcupcoins.org"
+          }
+        ]
+      },
+      "labels": [
+        "DYN2"
+      ],
+      "liquidity": {
+        "base": 20876,
+        "quote": 37.5518,
+        "usd": 75.45
+      },
+      "marketCap": 1815419,
+      "pairAddress": "FGsi59oJMiofBXST6cxVwXVqPCyug8EnM14UqrNLMocN",
+      "pairCreatedAt": 1778639923000,
+      "priceChange": {
+        "h24": -56.53,
+        "h6": -12.83
+      },
+      "priceNative": "0.001815",
+      "priceUsd": "0.001815",
+      "quoteToken": {
+        "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "name": "USD Coin",
+        "symbol": "USDC"
+      },
+      "txns": {
+        "h1": {
+          "buys": 0,
+          "sells": 0
+        },
+        "h24": {
+          "buys": 6,
+          "sells": 19
+        },
+        "h6": {
+          "buys": 0,
+          "sells": 7
+        },
+        "m5": {
+          "buys": 0,
+          "sells": 0
+        }
+      },
+      "url": "https://dexscreener.com/solana/fgsi59ojmiofbxst6cxvwxvqpcyug8enm14uqrnlmocn",
+      "volume": {
+        "h1": 0,
+        "h24": 64.56,
+        "h6": 2.08,
+        "m5": 0
+      }
+    },
+    {
+      "baseToken": {
+        "address": "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump",
+        "name": "World Cup Coin",
+        "symbol": "WORLDCUP"
+      },
+      "chainId": "solana",
+      "dexId": "meteora",
+      "fdv": 1916172,
+      "info": {
+        "header": "https://cdn.dexscreener.com/cms/images/hI_R5hhwN3fZjwKm?width=1500&height=500&quality=95&format=auto",
+        "imageUrl": "https://cdn.dexscreener.com/cms/images/F3H3l8fxpmRPX-yq?width=800&height=800&quality=95&format=auto",
+        "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump?timestamp=1778959800000",
+        "socials": [
+          {
+            "type": "twitter",
+            "url": "https://x.com/WorldCupCoinsPF"
+          }
+        ],
+        "websites": [
+          {
+            "label": "Website",
+            "url": "https://worldcupcoins.org"
+          }
+        ]
+      },
+      "labels": [
+        "DYN2"
+      ],
+      "liquidity": {
+        "base": 1216.447,
+        "quote": 13250,
+        "usd": 4.62
+      },
+      "marketCap": 1916172,
+      "pairAddress": "F55Lzm8i9JdoRj2MiKG787iaFWCM1pyhgDG5Pp5RxPDy",
+      "pairCreatedAt": 1778716815000,
+      "priceChange": {
+        "h1": 4.84,
+        "h24": -3.43,
+        "h6": -5.61,
+        "m5": 2.79
+      },
+      "priceNative": "11.07999",
+      "priceUsd": "0.001916",
+      "quoteToken": {
+        "address": "21Dt6Ne2tQ8wQ5j6G2zahtF1tskJqRmtSaaSwXjyBJVz",
+        "name": "PEPE DIAMOND",
+        "symbol": "PEPE"
+      },
+      "txns": {
+        "h1": {
+          "buys": 3,
+          "sells": 3
+        },
+        "h24": {
+          "buys": 31,
+          "sells": 44
+        },
+        "h6": {
+          "buys": 7,
+          "sells": 13
+        },
+        "m5": {
+          "buys": 1,
+          "sells": 2
+        }
+      },
+      "url": "https://dexscreener.com/solana/f55lzm8i9jdorj2mikg787iafwcm1pyhgdg5pp5rxpdy",
+      "volume": {
+        "h1": 0.2,
+        "h24": 2.85,
+        "h6": 0.64,
+        "m5": 0.06
+      }
+    },
+    {
+      "baseToken": {
+        "address": "9ireMXEb32ZSitkkEuVx4eJVjPhUJ8Qd7H96Sbr9rqZk",
+        "name": "9 Infinity Recursion",
+        "symbol": "9IR"
+      },
+      "chainId": "solana",
+      "dexId": "meteora",
+      "labels": [
+        "DYN2"
+      ],
+      "pairAddress": "8nsNs3eBWfsEr1L28sbLiQghgqt7Wg2b98j4aV9JVdcS",
+      "pairCreatedAt": 1778604632000,
+      "priceChange": {
+        "h24": 3.7,
+        "h6": 11.88
+      },
+      "priceNative": "0.004377",
+      "quoteToken": {
+        "address": "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump",
+        "name": "World Cup Coin",
+        "symbol": "WORLDCUP"
+      },
+      "txns": {
+        "h1": {
+          "buys": 0,
+          "sells": 0
+        },
+        "h24": {
+          "buys": 18,
+          "sells": 18
+        },
+        "h6": {
+          "buys": 7,
+          "sells": 3
+        },
+        "m5": {
+          "buys": 0,
+          "sells": 0
+        }
+      },
+      "url": "https://dexscreener.com/solana/8nsns3ebwfser1l28sbliqghgqt7wg2b98j4av9jvdcs",
+      "volume": {
+        "h1": 0,
+        "h24": 0,
+        "h6": 0,
+        "m5": 0
+      }
+    }
+  ],
+  "elapsed_seconds": 0.316910982131958,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit-limit": null,
+    "ratelimit-remaining": null,
+    "ratelimit-reset": null,
+    "retry-after": null
+  },
+  "status_code": 200,
+  "url": "https://api.dexscreener.com/token-pairs/v1/solana/33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump"
+}

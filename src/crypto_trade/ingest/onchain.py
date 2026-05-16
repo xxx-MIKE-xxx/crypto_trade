@@ -22,7 +22,7 @@ Install:
   pip install requests websockets
 
 Public RPC, 1 hour:
-  python solana_coin_1h_capture.py ^
+  python -m crypto_trade.ingest.onchain ^
     --mint 33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump ^
     --pair ETMhxtENfkMK85TAcveEbZdBv9htziWzDSddmShRP2wB ^
     --out ./capture ^
@@ -30,20 +30,11 @@ Public RPC, 1 hour:
 
 Recommended with Helius free RPC:
   set HELIUS_API_KEY=YOUR_KEY
-  python solana_coin_1h_capture.py ^
+  python -m crypto_trade.ingest.onchain ^
     --mint 33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump ^
     --pair ETMhxtENfkMK85TAcveEbZdBv9htziWzDSddmShRP2wB ^
     --rpc "https://mainnet.helius-rpc.com/?api-key=%HELIUS_API_KEY%" ^
     --ws "wss://mainnet.helius-rpc.com/?api-key=%HELIUS_API_KEY%" ^
-    --out ./capture ^
-    --duration-seconds 3600
-
-Multiple RPC URLs, rotate fetches:
-  python solana_coin_1h_capture.py ^
-    --mint TOKEN ^
-    --pair PAIR ^
-    --rpc https://api.mainnet-beta.solana.com ^
-    --rpc https://mainnet.helius-rpc.com/?api-key=KEY ^
     --out ./capture ^
     --duration-seconds 3600
 
@@ -67,442 +58,39 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import csv
-import hashlib
 import json
 import os
-import random
 import signal
-import time
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
-import requests
 import websockets
 
-
-PUBLIC_RPC = "https://api.mainnet-beta.solana.com"
-PUBLIC_WS = "wss://api.mainnet-beta.solana.com"
-WSOL_MINT = "So11111111111111111111111111111111111111112"
-USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-
-
-def now_ts() -> float:
-    return time.time()
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def ts_iso(ts: Optional[int]) -> Optional[str]:
-    if ts is None:
-        return None
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
-
-
-def ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def append_jsonl(path: Path, obj: Any) -> None:
-    ensure_dir(path.parent)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(obj, sort_keys=True, default=str) + "\n")
-
-
-def save_json(path: Path, obj: Any) -> None:
-    ensure_dir(path.parent)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=2, sort_keys=True, default=str)
-    tmp.replace(path)
-
-
-def iter_jsonl(path: Path) -> Iterable[Any]:
-    if not path.exists():
-        return
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except Exception:
-                continue
-
-
-def append_csv(path: Path, row: Dict[str, Any], fieldnames: List[str]) -> None:
-    ensure_dir(path.parent)
-    exists = path.exists()
-    with path.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not exists:
-            writer.writeheader()
-        writer.writerow(row)
-
-
-def read_csv_col(path: Path, col: str) -> Set[str]:
-    out: Set[str] = set()
-    if not path.exists():
-        return out
-    try:
-        with path.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                val = row.get(col)
-                if val:
-                    out.add(val)
-    except Exception:
-        pass
-    return out
-
-
-def chunked(items: List[str], n: int) -> Iterable[List[str]]:
-    for i in range(0, len(items), n):
-        yield items[i:i+n]
-
-
-def normalize_account_key(k: Any) -> Optional[str]:
-    if isinstance(k, str):
-        return k
-    if isinstance(k, dict):
-        for field in ("pubkey", "account", "address"):
-            val = k.get(field)
-            if isinstance(val, str):
-                return val
-    return None
-
-
-def get_account_keys(tx: Dict[str, Any]) -> List[str]:
-    msg = (((tx.get("transaction") or {}).get("message")) or {})
-    keys = msg.get("accountKeys") or []
-    out: List[str] = []
-    for k in keys:
-        val = normalize_account_key(k)
-        if val:
-            out.append(val)
-    return out
-
-
-def token_balance_float(row: Dict[str, Any]) -> Optional[float]:
-    ui = row.get("uiTokenAmount") or {}
-    if ui.get("uiAmount") is not None:
-        try:
-            return float(ui["uiAmount"])
-        except Exception:
-            pass
-    if ui.get("uiAmountString") is not None:
-        try:
-            return float(ui["uiAmountString"])
-        except Exception:
-            pass
-    amount = ui.get("amount")
-    dec = ui.get("decimals")
-    if amount is not None and dec is not None:
-        try:
-            return float(amount) / (10 ** int(dec))
-        except Exception:
-            pass
-    return None
-
-
-def short_rpc_name(url: str) -> str:
-    h = hashlib.sha1(url.encode("utf-8")).hexdigest()[:8]
-    if "helius" in url:
-        return f"helius_{h}"
-    if "alchemy" in url:
-        return f"alchemy_{h}"
-    if "quicknode" in url or "quiknode" in url:
-        return f"quicknode_{h}"
-    if "solana.com" in url or "mainnet-beta" in url:
-        return f"public_{h}"
-    return f"rpc_{h}"
-
-
-@dataclass
-class RpcResult:
-    ok: bool
-    result: Any = None
-    error: Optional[str] = None
-    retry_after: Optional[float] = None
-    status_code: Optional[int] = None
-
-
-class RpcEndpoint:
-    def __init__(self, url: str, min_interval: float, debug: bool = False):
-        self.url = url
-        self.name = short_rpc_name(url)
-        self.min_interval = min_interval
-        self.debug = debug
-        self.session = requests.Session()
-        self.req_id = random.randint(1000, 1_000_000)
-        self.next_allowed_at = 0.0
-        self.stats = {
-            "calls": 0,
-            "ok": 0,
-            "rate_limited": 0,
-            "errors": 0,
-            "last_error": None,
-        }
-
-    def call(self, method: str, params: List[Any]) -> RpcResult:
-        wait = self.next_allowed_at - now_ts()
-        if wait > 0:
-            time.sleep(wait)
-
-        if self.min_interval > 0:
-            # Simple per-endpoint throttle.
-            self.next_allowed_at = max(self.next_allowed_at, now_ts()) + self.min_interval
-
-        self.req_id += 1
-        body = {
-            "jsonrpc": "2.0",
-            "id": self.req_id,
-            "method": method,
-            "params": params,
-        }
-
-        self.stats["calls"] += 1
-
-        try:
-            if self.debug:
-                print(f"[{self.name}] RPC {method}")
-
-            r = self.session.post(self.url, json=body, timeout=60)
-            retry_after = None
-            if r.headers.get("Retry-After"):
-                try:
-                    retry_after = float(r.headers["Retry-After"])
-                except Exception:
-                    retry_after = None
-
-            if r.status_code == 429:
-                self.stats["rate_limited"] += 1
-                self.stats["last_error"] = "HTTP_429_RATE_LIMIT"
-                if retry_after is None:
-                    retry_after = 10.0
-                self.next_allowed_at = max(self.next_allowed_at, now_ts() + retry_after)
-                return RpcResult(False, error="HTTP_429_RATE_LIMIT", retry_after=retry_after, status_code=429)
-
-            if r.status_code == 403:
-                self.stats["errors"] += 1
-                self.stats["last_error"] = "HTTP_403_FORBIDDEN"
-                return RpcResult(False, error="HTTP_403_FORBIDDEN", status_code=403)
-
-            if r.status_code >= 400:
-                self.stats["errors"] += 1
-                msg = f"HTTP_{r.status_code}: {r.text[:500]}"
-                self.stats["last_error"] = msg
-                return RpcResult(False, error=msg, status_code=r.status_code)
-
-            data = r.json()
-            if "error" in data:
-                self.stats["errors"] += 1
-                msg = f"RPC_ERROR_{method}: {data['error']}"
-                self.stats["last_error"] = msg
-                # Some providers return rate-limit as JSON-RPC error.
-                msg_lower = str(data["error"]).lower()
-                if "rate" in msg_lower or "limit" in msg_lower or "too many" in msg_lower:
-                    self.stats["rate_limited"] += 1
-                    self.next_allowed_at = max(self.next_allowed_at, now_ts() + 10.0)
-                    return RpcResult(False, error="RPC_RATE_LIMIT", retry_after=10.0)
-                return RpcResult(False, error=msg)
-
-            self.stats["ok"] += 1
-            return RpcResult(True, result=data.get("result"))
-
-        except requests.RequestException as e:
-            self.stats["errors"] += 1
-            msg = f"REQUEST_EXCEPTION: {repr(e)}"
-            self.stats["last_error"] = msg
-            self.next_allowed_at = max(self.next_allowed_at, now_ts() + 3.0)
-            return RpcResult(False, error=msg)
-        except Exception as e:
-            self.stats["errors"] += 1
-            msg = f"EXCEPTION: {repr(e)}"
-            self.stats["last_error"] = msg
-            return RpcResult(False, error=msg)
-
-
-class RpcPool:
-    def __init__(self, urls: List[str], min_interval: float, debug: bool = False):
-        if not urls:
-            urls = [PUBLIC_RPC]
-        self.endpoints = [RpcEndpoint(u, min_interval=min_interval, debug=debug) for u in urls]
-        self.idx = 0
-
-    def next_endpoint(self) -> RpcEndpoint:
-        ep = self.endpoints[self.idx % len(self.endpoints)]
-        self.idx += 1
-        return ep
-
-    def call_any(self, method: str, params: List[Any], tries: Optional[int] = None) -> Tuple[RpcResult, str]:
-        if tries is None:
-            tries = max(1, len(self.endpoints))
-        last: Optional[Tuple[RpcResult, str]] = None
-        for _ in range(tries):
-            ep = self.next_endpoint()
-            res = ep.call(method, params)
-            if res.ok:
-                return res, ep.name
-            last = (res, ep.name)
-        assert last is not None
-        return last
-
-    def stats(self) -> Dict[str, Any]:
-        return {ep.name: ep.stats | {"url": ep.url} for ep in self.endpoints}
-
-
-def rpc_get_transaction(pool: RpcPool, sig: str) -> Tuple[RpcResult, str]:
-    return pool.call_any(
-        "getTransaction",
-        [
-            sig,
-            {
-                "encoding": "jsonParsed",
-                "commitment": "confirmed",
-                "maxSupportedTransactionVersion": 0,
-            },
-        ],
-    )
-
-
-def rpc_get_signatures(pool: RpcPool, address: str, limit: int) -> Tuple[RpcResult, str]:
-    return pool.call_any(
-        "getSignaturesForAddress",
-        [
-            address,
-            {
-                "limit": limit,
-                "commitment": "confirmed",
-            },
-        ],
-    )
-
-
-def rpc_get_multiple_accounts(pool: RpcPool, addresses: List[str]) -> Tuple[RpcResult, str]:
-    return pool.call_any(
-        "getMultipleAccounts",
-        [
-            addresses,
-            {
-                "encoding": "base64",
-                "commitment": "confirmed",
-            },
-        ],
-    )
-
-
-def summarize_tx_for_mint(signature: str, tx: Any, mint: str, seen_by: Iterable[str], rpc_name: str, attempt: int) -> Dict[str, Any]:
-    base = {
-        "fetched_at": now_iso(),
-        "signature": signature,
-        "attempt": attempt,
-        "rpc": rpc_name,
-        "slot": None,
-        "block_time": None,
-        "iso_time": None,
-        "err": None,
-        "seen_by": ",".join(sorted(set(seen_by))),
-        "mentions_mint_in_balances": False,
-        "mint_accounts_changed": 0,
-        "mint_balance_delta_sum": None,
-        "fee_lamports": None,
-        "has_inner_instructions": False,
-        "log_count": 0,
-    }
-
-    if not isinstance(tx, dict):
-        base["err"] = "null_or_missing_tx"
-        return base
-
-    meta = tx.get("meta") or {}
-    pre_map: Dict[Tuple[int, str], float] = {}
-    post_map: Dict[Tuple[int, str], float] = {}
-
-    for row in meta.get("preTokenBalances") or []:
-        if row.get("mint") == mint:
-            try:
-                idx = int(row.get("accountIndex", -1))
-            except Exception:
-                idx = -1
-            owner = row.get("owner") or ""
-            val = token_balance_float(row)
-            if val is not None:
-                pre_map[(idx, owner)] = val
-
-    for row in meta.get("postTokenBalances") or []:
-        if row.get("mint") == mint:
-            try:
-                idx = int(row.get("accountIndex", -1))
-            except Exception:
-                idx = -1
-            owner = row.get("owner") or ""
-            val = token_balance_float(row)
-            if val is not None:
-                post_map[(idx, owner)] = val
-
-    keys = set(pre_map.keys()) | set(post_map.keys())
-    deltas = []
-    for k in keys:
-        deltas.append(post_map.get(k, 0.0) - pre_map.get(k, 0.0))
-
-    err = meta.get("err")
-    base.update({
-        "slot": tx.get("slot"),
-        "block_time": tx.get("blockTime"),
-        "iso_time": ts_iso(tx.get("blockTime")),
-        "err": json.dumps(err) if err else None,
-        "mentions_mint_in_balances": bool(keys),
-        "mint_accounts_changed": len(keys),
-        "mint_balance_delta_sum": sum(deltas) if deltas else None,
-        "fee_lamports": meta.get("fee"),
-        "has_inner_instructions": bool(meta.get("innerInstructions")),
-        "log_count": len(meta.get("logMessages") or []),
-    })
-    return base
-
-
-def discover_token_accounts_from_tx(tx: Any, target_mint: str, quote_mints: Set[str]) -> List[Dict[str, Any]]:
-    if not isinstance(tx, dict):
-        return []
-    account_keys = get_account_keys(tx)
-    meta = tx.get("meta") or {}
-    rows = (meta.get("preTokenBalances") or []) + (meta.get("postTokenBalances") or [])
-
-    wanted = set(quote_mints) | {target_mint}
-    discovered: Dict[Tuple[str, str], Dict[str, Any]] = {}
-
-    sigs = ((tx.get("transaction") or {}).get("signatures") or [])
-    source_sig = sigs[0] if sigs else None
-
-    for row in rows:
-        mint = row.get("mint")
-        if mint not in wanted:
-            continue
-        try:
-            idx = int(row.get("accountIndex", -1))
-        except Exception:
-            idx = -1
-        token_account = account_keys[idx] if 0 <= idx < len(account_keys) else None
-        if not token_account:
-            continue
-
-        discovered[(token_account, mint)] = {
-            "discovered_at": now_iso(),
-            "token_account": token_account,
-            "mint": mint,
-            "owner": row.get("owner"),
-            "program_id": row.get("programId"),
-            "source_slot": tx.get("slot"),
-            "source_signature": source_sig,
-        }
-
-    return list(discovered.values())
+from crypto_trade.core.io import (
+    append_csv,
+    append_jsonl,
+    chunked,
+    ensure_dir,
+    iter_jsonl,
+    read_csv_col,
+    save_json,
+)
+from crypto_trade.core.logging import configure_logging
+from crypto_trade.core.rpc import RpcPool, short_rpc_name
+from crypto_trade.core.time import now_iso, now_ts, utc_now
+from crypto_trade.ingest.solana_rpc import (
+    PUBLIC_RPC,
+    PUBLIC_WS,
+    USDC_MINT,
+    WSOL_MINT,
+    get_multiple_accounts,
+    get_signatures_for_address,
+    get_transaction,
+)
+from crypto_trade.ingest.solana_tx import (
+    discover_token_accounts_from_tx,
+    summarize_tx_for_mint,
+)
 
 
 class Capture:
@@ -532,7 +120,12 @@ class Capture:
         self.ws_url = ws_url
         self.debug = debug
 
-        self.rpc_pool = RpcPool(rpc_urls, min_interval=rpc_min_interval, debug=debug)
+        self.rpc_pool = RpcPool(
+            urls=rpc_urls,
+            min_interval=rpc_min_interval,
+            debug=debug,
+            default_url=PUBLIC_RPC,
+        )
         self.tx_retry_seconds = tx_retry_seconds
         self.max_tx_attempts = max_tx_attempts
         self.poll_seconds = poll_seconds
@@ -648,9 +241,7 @@ class Capture:
                 })
 
     async def websocket_listener(self) -> None:
-        """
-        WebSocket does discovery only; if it disconnects, poller covers gaps.
-        """
+        """WebSocket does discovery only; if it disconnects, the poller covers gaps."""
         while not self.stop_event.is_set():
             try:
                 async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=20) as ws:
@@ -731,7 +322,9 @@ class Capture:
     async def poller(self) -> None:
         while not self.stop_event.is_set():
             for addr in self.watch_addresses:
-                res, rpc_name = await asyncio.to_thread(rpc_get_signatures, self.rpc_pool, addr, self.backfill_limit)
+                res, rpc_name = await asyncio.to_thread(
+                    get_signatures_for_address, self.rpc_pool, addr, self.backfill_limit
+                )
                 if not res.ok:
                     append_jsonl(self.paths["failed"], {
                         "failed_at": now_iso(),
@@ -765,7 +358,7 @@ class Capture:
             attempt = self.attempts.get(sig, 0) + 1
             self.attempts[sig] = attempt
 
-            res, rpc_name = await asyncio.to_thread(rpc_get_transaction, self.rpc_pool, sig)
+            res, rpc_name = await asyncio.to_thread(get_transaction, self.rpc_pool, sig)
 
             if res.ok:
                 tx = res.result
@@ -778,7 +371,9 @@ class Capture:
                     "transaction": tx,
                 })
 
-                row = summarize_tx_for_mint(sig, tx, self.mint, self.signature_sources.get(sig, set()), rpc_name, attempt)
+                row = summarize_tx_for_mint(
+                    sig, tx, self.mint, self.signature_sources.get(sig, set()), rpc_name, attempt
+                )
                 append_csv(self.paths["tx_index"], row, self.csv_fields)
 
                 self.fetched_sigs.add(sig)
@@ -798,7 +393,10 @@ class Capture:
                         append_jsonl(self.paths["discovered_accounts"], acct)
 
                 if self.stats["transactions_fetched"] % 10 == 0:
-                    print(f"[fetch] fetched={self.stats['transactions_fetched']} queue={self.pending.qsize()} seen={len(self.seen_sigs)}")
+                    print(
+                        f"[fetch] fetched={self.stats['transactions_fetched']} "
+                        f"queue={self.pending.qsize()} seen={len(self.seen_sigs)}"
+                    )
 
             else:
                 self.stats["transactions_failed"] += 1
@@ -837,7 +435,9 @@ class Capture:
         while not self.stop_event.is_set():
             accounts = sorted(self.snapshot_accounts)
             for batch in chunked(accounts, 100):
-                res, rpc_name = await asyncio.to_thread(rpc_get_multiple_accounts, self.rpc_pool, batch)
+                res, rpc_name = await asyncio.to_thread(
+                    get_multiple_accounts, self.rpc_pool, batch
+                )
                 if res.ok:
                     self.stats["account_snapshots"] += 1
                     append_jsonl(self.paths["snapshots"], {
@@ -962,7 +562,7 @@ async def async_main() -> int:
         if a and a not in watch_addresses:
             watch_addresses.append(a)
 
-    out_dir = Path(args.out) / args.mint / datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    out_dir = Path(args.out) / args.mint / utc_now().strftime("%Y%m%d_%H%M%S")
     ensure_dir(out_dir)
 
     capture = Capture(
@@ -1011,6 +611,7 @@ async def async_main() -> int:
 
 
 def main() -> int:
+    configure_logging()
     return asyncio.run(async_main())
 
 

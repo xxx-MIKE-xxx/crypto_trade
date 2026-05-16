@@ -43,7 +43,11 @@ Data collected from PumpPortal:
 mint
 created_at
 migration_at
+
+
+
 time_to_migration
+
 
 Data acquisition pipeline for future analysis - with way bigger budget - >100$ / day
     Data is collected from PumpPortal for every coin that passes intial requirements on a rolling window basis
@@ -66,3 +70,49 @@ Data acquisition pipeline for future analysis - with way bigger budget - >100$ /
     time_to_migration
     final_5m_share_of_20m_volume
 
+
+## Package layout
+
+The runtime code lives under `src/crypto_trade/` and follows a layered architecture: shared infrastructure in `core/`, source-specific data acquisition in `ingest/`, enrichment in `features/`, and the live acquisition pipeline in `pipeline/`. Scripts under `scripts/` are thin shims that delegate to the packages.
+
+| Module | Responsibility |
+| --- | --- |
+| `core/time.py` | UTC timestamp helpers (`utc_now`, `now_ts`, `now_ms`, `now_iso`, `utc_now_iso_z`, `utc_now_iso_ms_z`, `ts_iso`, `parse_event_ts`). |
+| `core/io.py` | File I/O: `ensure_dir`, atomic `save_json`, append-only `append_jsonl` / `append_csv`, tolerant `iter_jsonl`, `read_csv_col`, `chunked`. |
+| `core/rpc.py` | JSON-RPC primitives: `RpcResult`, `RpcEndpoint`, `RpcPool`, `short_rpc_name`. |
+| `core/http.py` | Shared `requests.Session` factory and `get_json` wrapper with rate-limit header capture. |
+| `core/env.py` | `load_env` / `get_env` wrappers around `python-dotenv`. |
+| `core/text.py` | `compact_json_dumps`, `safe_part` (filesystem partitions), `short_hash`. |
+| `core/logging.py` | `configure_logging()` used by every CLI entry point. |
+| `ingest/onchain.py` | `Capture` class and `main()` for Solana on-chain capture. |
+| `ingest/solana_rpc.py` | Thin Solana JSON-RPC wrappers (`get_transaction`, `get_signatures_for_address`, `get_multiple_accounts`). |
+| `ingest/solana_tx.py` | Pure transaction parsing helpers (no I/O). |
+| `ingest/bronze.py` | `EventSink` partitioned bronze writer (Parquet with JSONL fallback). |
+| `ingest/dexscreener.py` | DexScreener REST probe. |
+| `ingest/pumpportal.py` | PumpPortal WebSocket sampler. |
+| `features/risk/` | Token risk scoring package (`http_client`, `scoring`, `report`, `cli`). `features/token_risk.py` re-exports the package for backwards compatibility. |
+| `features/alt_data/` | Website grader package (`fetch`, `grading`, `cli`). |
+| `pipeline/` | Live acquisition orchestrator: `config`, `state` (SQLite), `mint`, `orchestrator`, `pumpportal_loop`, `__main__`. |
+| `scripts/` | Thin `runpy` shims that delegate to package modules. |
+
+## Entry points
+
+The package exposes the following console scripts (declared in `pyproject.toml`):
+
+| Command | Target |
+| --- | --- |
+| `capture-coin` | `crypto_trade.ingest.onchain:main` |
+| `run-stream` | `crypto_trade.ingest.pumpportal:main` |
+| `probe-dexscreener` | `crypto_trade.ingest.dexscreener:main` |
+| `score-token-risk` | `crypto_trade.features.risk.cli:main` |
+| `grade-website` | `crypto_trade.features.alt_data.cli:main` |
+| `run-pipeline` | `crypto_trade.pipeline.__main__:main` |
+
+## Tests
+
+```bash
+pytest tests -q
+ruff check src tests
+```
+
+The `tests/core/` suite pins the public surface of each `core/*` module (timestamp formats, atomic I/O, tolerant JSONL, HTTP classification, RPC throttling). `tests/ingest/` covers `EventSink` partition layout and the JSONL fallback when `pyarrow` is unavailable.

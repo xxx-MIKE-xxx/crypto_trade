@@ -1,0 +1,619 @@
+{
+  "body": [
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/GGr8f1dpWd5X1H5Urs1r5cGNMmS7greRXSoDDd2kpump?timestamp=1778959800000",
+      "tokenAddress": "GGr8f1dpWd5X1H5Urs1r5cGNMmS7greRXSoDDd2kpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/ggr8f1dpwd5x1h5urs1r5cgnmms7grerxsoddd2kpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "base",
+      "description": "VVVKernel is a character-driven launch and operations kernel for meme, culture, and token projects on Base, deployed via Bankrbot.\nUnder the hood, it runs on the Venice AI substrate\u2014a decentralized, privacy-preserving inference network. The kernel exposes seven specialized expert roles that you can interact with via the web terminal, a CLI, or any MCP-compatible client.",
+      "header": "https://cdn.dexscreener.com/cms/images/6MOPCtHhGvHB47Cd?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "PlOQeAbVmi-JUp4k",
+      "links": [
+        {
+          "url": "https://vvvkernel.com/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/VeniceKernel"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0xb66e76f9ed3e13f24c5b68f68be631cd82affba3?timestamp=1778959800000",
+      "tokenAddress": "0xb66e76F9Ed3e13F24C5b68F68BE631CD82AffbA3",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/base/0xb66e76f9ed3e13f24c5b68f68be631cd82affba3"
+    },
+    {
+      "amount": 50,
+      "chainId": "solana",
+      "description": "Baby Rage is a small but angry little character who gets mad easily and brings chaotic fun everywhere he goes.",
+      "header": "https://cdn.dexscreener.com/cms/images/re57Bszu7wBqmryY?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "LN0mhYl9P9b-vczg",
+      "links": [
+        {
+          "url": "https://babyrage.fun/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/BabyRageSolana"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/t7rBF8JNqENeDAy7U2PRYYhbbT24qJ8mzFZmpDMpump?timestamp=1778959800000",
+      "tokenAddress": "t7rBF8JNqENeDAy7U2PRYYhbbT24qJ8mzFZmpDMpump",
+      "totalAmount": 110,
+      "url": "https://dexscreener.com/solana/t7rbf8jnqeneday7u2pryyhbbt24qj8mzfzmpdmpump"
+    },
+    {
+      "amount": 100,
+      "chainId": "solana",
+      "description": "Welcome to the BTC6900, an advanced blockchain cryptography token with limitless possibilities and scientific utilization.",
+      "header": "https://cdn.dexscreener.com/cms/images/3pdFOcr8m_FaUYiR?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "cf-lyLT_qQxrCfsd",
+      "links": [
+        {
+          "url": "https://btc6900sol.xyz"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/Bitcoin6900SolX"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/bitcoin6900_sol"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/J1dhFo6jJ5APNuaZvzs14ixRKwU3LWU4Yf226PCSpump?timestamp=1778959800000",
+      "tokenAddress": "J1dhFo6jJ5APNuaZvzs14ixRKwU3LWU4Yf226PCSpump",
+      "totalAmount": 200,
+      "url": "https://dexscreener.com/solana/j1dhfo6jj5apnuazvzs14ixrkwu3lwu4yf226pcspump"
+    },
+    {
+      "amount": 10,
+      "chainId": "bsc",
+      "description": "\"Freedom of Money\" is a powerful memoir by Changpeng Zhao about resilience, financial freedom, crypto, and the mindset behind building one of the most influential companies in the world.",
+      "header": "https://cdn.dexscreener.com/cms/images/ncc5Ke55jgtTL0iA?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "3mEI9Hk2lOFYEmXF",
+      "links": [
+        {
+          "url": "https://freedom-of-money.org/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/FREEDOM_CTO"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/FREEEDOM_CTO"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/bsc/0x3e17ee3b1895dd1a7cf993a89769c5e029584444?timestamp=1778959800000",
+      "tokenAddress": "0x3e17ee3B1895dD1A7CF993A89769C5e029584444",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/bsc/0x3e17ee3b1895dd1a7cf993a89769c5e029584444"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "header": "https://cdn.dexscreener.com/cms/images/1WlswBjO4nTpuKL9?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "WiiV7kG_-QA1vjck",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2027076670889533775"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Agew44YoaCAXKViEhkdfZ5CQAuqtTFPPnvzTanRTpump?timestamp=1778959800000",
+      "tokenAddress": "Agew44YoaCAXKViEhkdfZ5CQAuqtTFPPnvzTanRTpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/agew44yoacaxkviehkdfz5cqauqttfppnvztanrtpump"
+    },
+    {
+      "amount": 50,
+      "chainId": "solana",
+      "description": "building the most |secure| meme on @PumpFun\n\neveryone had to take profits sir, we just bring attention to it.\n\nif you dyor and want to return to memes/community:\n\nupdate pfp. update name to \"/https \"xxx\"/\n\n< know what u Hold, dont trade Emotions. trade Conviction.  Repeat it. >\n\nlets save the trenches. \none meme, one dream.",
+      "header": "https://cdn.dexscreener.com/cms/images/eP4oaEmepjcyNpC0?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "108f6ca8e68018278057bc46b1507ecec55e2a0d5f233acb4727338efc52f92a",
+      "links": [
+        {
+          "url": "https://linktr.ee/pumpaa"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/httpsonsol"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/https_solana"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump?timestamp=1778959800000",
+      "tokenAddress": "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+      "totalAmount": 150,
+      "url": "https://dexscreener.com/solana/7sgdnqsvugpahh6qyxb3g5gsdk9fazzm299kycxspump"
+    },
+    {
+      "amount": 30,
+      "chainId": "solana",
+      "description": "TRUMP\nPEPE\nThe rarest card in the deck. Donald Trump fused with Pepe the Frog \u2014 green skin, golden hair, one red tie, and a permanent smug grin. Pulled fresh from the bonding curve.",
+      "header": "https://cdn.dexscreener.com/cms/images/-x_AmWNhqGed4eRb?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "7GOikFfJAkfdB7I6",
+      "links": [
+        {
+          "url": "https://trumppepe-9zo.pages.dev/"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/2uoCS85SJhiT8juJxbXepqkPdWbaVMLLdfD6djmvpump?timestamp=1778959800000",
+      "tokenAddress": "2uoCS85SJhiT8juJxbXepqkPdWbaVMLLdfD6djmvpump",
+      "totalAmount": 30,
+      "url": "https://dexscreener.com/solana/2uocs85sjhit8jujxbxepqkpdwbavmlldfd6djmvpump"
+    },
+    {
+      "amount": 100,
+      "chainId": "solana",
+      "description": "Welcome to the BTC6900, an advanced blockchain cryptography token with limitless possibilities and scientific utilization.",
+      "header": "https://cdn.dexscreener.com/cms/images/3pdFOcr8m_FaUYiR?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "cf-lyLT_qQxrCfsd",
+      "links": [
+        {
+          "url": "https://btc6900sol.xyz"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/Bitcoin6900SolX"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/bitcoin6900_sol"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/J1dhFo6jJ5APNuaZvzs14ixRKwU3LWU4Yf226PCSpump?timestamp=1778959800000",
+      "tokenAddress": "J1dhFo6jJ5APNuaZvzs14ixRKwU3LWU4Yf226PCSpump",
+      "totalAmount": 200,
+      "url": "https://dexscreener.com/solana/j1dhfo6jj5apnuazvzs14ixrkwu3lwu4yf226pcspump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "Built in the trenches.\nEvery chart a battlefield, every entry a blood oath.\nThis isn\u2019t a token.\n\nIt\u2019s the code: Get Rich Or Die Trying.",
+      "header": "https://cdn.dexscreener.com/cms/images/d93661d96d88c65af497ee10b8f510a4bca6fd21f6c46d91f55a59a361515aca?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "ba1e2bb5dfeaeb856980f32eec21660059017490cf1eedd72c979f7f6c66a5ca",
+      "links": [
+        {
+          "url": "https://grodt.xyz/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/grodtsolana"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/grodtsolana"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/6V4QLouv2HTbae34hBjLgW5Qc3kdquqFLBsDS3scR1CH?timestamp=1778959800000",
+      "tokenAddress": "6V4QLouv2HTbae34hBjLgW5Qc3kdquqFLBsDS3scR1CH",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/6v4qlouv2htbae34hbjlgw5qc3kdquqflbsds3scr1ch"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "$WMV mocks the \"woke mind virus,\" Elon Musk's term for excessive progressive ideology infecting culture. \ud83e\udde0\ud83d\udc89\n\nCoined by Musk in 2023 tweets/interviews criticizing \"woke\" overreach in media/tech, the token satirizes it as a contagious cultural plague\u2014perfect crypto fodder for anti-PC degens.",
+      "header": "https://cdn.dexscreener.com/cms/images/-V4sNn4xCOYasJPR?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "T_9mOkHZddyo1UTV",
+      "links": [
+        {
+          "url": "https://m.youtube.com/shorts/tXxLLT9ZmPc"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2035064303926096310"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/BmKwr5kVmsbCfSZJGFC8geWeH1MF5wo6YqJJvFhD6nKz?timestamp=1778959800000",
+      "tokenAddress": "BmKwr5kVmsbCfSZJGFC8geWeH1MF5wo6YqJJvFhD6nKz",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/bmkwr5kvmsbcfszjgfc8geweh1mf5wo6yqjjvfhd6nkz"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "header": "https://cdn.dexscreener.com/cms/images/Ap5klhhF3vJap3ae?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "leaefTuMPj1od-L3",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/swatchmemes_"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/FRZdAqPfrTbx264tRhVDSoGExUvYg5C6wwZSzCqypump?timestamp=1778959800000",
+      "tokenAddress": "FRZdAqPfrTbx264tRhVDSoGExUvYg5C6wwZSzCqypump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/frzdaqpfrtbx264trhvdsogexuvyg5c6wwzszcqypump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "new pygmy hippo named jellybean",
+      "header": "https://cdn.dexscreener.com/cms/images/MatUKh5_Gqm6620L?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "ATDK9W7gUGyZCGJB",
+      "links": [
+        {
+          "url": "https://thejellybean.fun"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/jellybeanonsol?s=21"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/jellybeanog"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/412zDygnwP9DzitnQVgRKUFFTDmrYScFch6P2k39pump?timestamp=1778959800000",
+      "tokenAddress": "412zDygnwP9DzitnQVgRKUFFTDmrYScFch6P2k39pump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/412zdygnwp9dzitnqvgrkufftdmryscfch6p2k39pump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "You will own nothing and you will be happy",
+      "header": "https://cdn.dexscreener.com/cms/images/11ba68c164b516ccd9ab4ce1d95da0f5f85bad5971ffccdd6bc9ebac7870c15f?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "2ffc5c25419e9c51c1ef10ee3930528e366bf90938b25b02fbca8b40254a9d2d",
+      "links": [
+        {
+          "url": "https://www.ownnothing.xyz/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/youllownnothing"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/YouWillOwnNothing"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/F7pB3ZdfBnyFw2LRHydWEn9BmhEa5XihXLjhySFRpump?timestamp=1778959800000",
+      "tokenAddress": "F7pB3ZdfBnyFw2LRHydWEn9BmhEa5XihXLjhySFRpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/f7pb3zdfbnyfw2lrhydwen9bmhea5xihxljhysfrpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "header": "https://cdn.dexscreener.com/cms/images/k0id4E3U46RQQILD?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "gh0iLreFqfmc9k-z",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2024354222033006592"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DvyN8Z3eHiD1MDFX9B12oA44TpHJrZQ4aMZky4xUpump?timestamp=1778959800000",
+      "tokenAddress": "DvyN8Z3eHiD1MDFX9B12oA44TpHJrZQ4aMZky4xUpump",
+      "totalAmount": 20,
+      "url": "https://dexscreener.com/solana/dvyn8z3ehid1mdfx9b12oa44tphjrzq4amzky4xupump"
+    },
+    {
+      "amount": 30,
+      "chainId": "ethereum",
+      "description": "Teslas next mascot. Cyberhog",
+      "icon": "aOW_RnBgL5Ml5Eu6",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/Tesla_Malaysia/status/2054825744120123589"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/ethereum/0x4e6cb21ad4f249349a167debc7258d006e9838cb?timestamp=1778959800000",
+      "tokenAddress": "0x4e6cb21AD4F249349A167deBc7258d006E9838cB",
+      "totalAmount": 30,
+      "url": "https://dexscreener.com/ethereum/0x4e6cb21ad4f249349a167debc7258d006e9838cb"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "header": "https://cdn.dexscreener.com/cms/images/k0id4E3U46RQQILD?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "gh0iLreFqfmc9k-z",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2024354222033006592"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DvyN8Z3eHiD1MDFX9B12oA44TpHJrZQ4aMZky4xUpump?timestamp=1778959800000",
+      "tokenAddress": "DvyN8Z3eHiD1MDFX9B12oA44TpHJrZQ4aMZky4xUpump",
+      "totalAmount": 20,
+      "url": "https://dexscreener.com/solana/dvyn8z3ehid1mdfx9b12oa44tphjrzq4amzky4xupump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "It\u2019s 2009. You wake up one morning and see a new cryptocurrency called Bitcoin.\n\nAt the time, it looks like just another internet experiment.\n\nLittle do you know, you\u2019re staring at the greatest investment opportunitie of your lifetime.",
+      "header": "https://cdn.dexscreener.com/cms/images/VUjp_yHzvkFD61AZ?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "6dYpxBSvo0teKvXv",
+      "links": [
+        {
+          "url": "https://btconsol.fun/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1949860444870475788"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/BTConSOL2009"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/7LXhqS7Q36Vku43BP5D6cnnbmru9GzQLdVXXGcdVpump?timestamp=1778959800000",
+      "tokenAddress": "7LXhqS7Q36Vku43BP5D6cnnbmru9GzQLdVXXGcdVpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/7lxhqs7q36vku43bp5d6cnnbmru9gzqldvxxgcdvpump"
+    },
+    {
+      "amount": 100,
+      "chainId": "solana",
+      "description": "Bringing the American strategic oil supply data on-chain and tokenizing one of the United States' biggest assets.",
+      "header": "https://cdn.dexscreener.com/cms/images/CMVfFSFD_IWmBXW2?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "TH1mqHV5Gq62VibY",
+      "links": [
+        {
+          "url": "https://www.SAOS.live"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/saostoken/"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/CMButZqQKoRabRAwemmG9gpXKa62KpQByLwjQLbjM1US?timestamp=1778959800000",
+      "tokenAddress": "CMButZqQKoRabRAwemmG9gpXKa62KpQByLwjQLbjM1US",
+      "totalAmount": 100,
+      "url": "https://dexscreener.com/solana/cmbutzqqkorabrawemmg9gpxka62kpqbylwjqlbjm1us"
+    },
+    {
+      "amount": 50,
+      "chainId": "solana",
+      "description": "conviction is only real when it survives pressure.",
+      "header": "https://cdn.dexscreener.com/cms/images/ojtF8Gil_OgpqnA1?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "jxoZgndJZojOyHs1",
+      "links": [
+        {
+          "url": "https://solconviction.xyz/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2038637463430730026"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/6Vr4MFL1kKwD7RJj1yBx12orh876cWvNBTQaBFFdpump?timestamp=1778959800000",
+      "tokenAddress": "6Vr4MFL1kKwD7RJj1yBx12orh876cWvNBTQaBFFdpump",
+      "totalAmount": 50,
+      "url": "https://dexscreener.com/solana/6vr4mfl1kkwd7rjj1ybx12orh876cwvnbtqabffdpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "LIVE+TECH\n\nBasically we all know eyes are the most important thing for any coin.\n\nSo I made a website where the dashboard tracks live concurrent viewers via heartbeat pings. The bot uses creator fees to buy and burn $EYES aggressively whenever the viewer count is high, and stops when nobody's watching. \n\nThe chart literally moves with the size of the live audience. Open the page \u2192 contribute to the pump. Close it \u2192 contribute to nothing. The price IS the attention.\n\nThis has NEVER been done before, and the trenches need original ideas. This is coded for millions.\n\nBtw im selling the dev wallet at the start so it can get blasted from the funds+new creator rewards.",
+      "header": "https://cdn.dexscreener.com/cms/images/FE7yGHDd71RajJ3h?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "jvUWYvdq4kRmx9j2",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2029833193042460801"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/FCR8oEDFJfcagd8hHPL7abewHQCyRa4GCWT4Bip6pump?timestamp=1778959800000",
+      "tokenAddress": "FCR8oEDFJfcagd8hHPL7abewHQCyRa4GCWT4Bip6pump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/fcr8oedfjfcagd8hhpl7abewhqcyra4gcwt4bip6pump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "$MAGA isn\u2019t just a meme \u2014 it\u2019s a movement focused on restoring strength to American energy.\n\nModern American Gas Assets represents a future where domestic energy wins, fuel costs fall, and everyday Americans stop getting crushed at the pump. As gas prices rise and energy policies weaken independence, $MAGA stands behind the idea of expanding American oil & gas production, strengthening infrastructure, and bringing affordability back to consumers.\n\nThe mission is simple:\n\u26fd\ufe0f Lower gas prices\n\ud83c\uddfa\ud83c\uddf8 Support American energy dominance\n\ud83d\udee2\ufe0f Push the narrative of modern gas assets\n\ud83d\udcc8 Build a community around energy independence\n\n$MAGA is fueled by the belief that strong domestic production creates cheaper fuel, stronger markets, and a stronger America.",
+      "header": "https://cdn.dexscreener.com/cms/images/pfoFGMwiaofYQfjv?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "o8RatT7QOV1yCoAn",
+      "links": [
+        {
+          "url": "https://www.whitehouse.gov/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/MAGA_gastoken"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/magatokenz"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/CougFoQHoEkC47tc4DDrxwcuw5YzsBCfdiQoLexfpump?timestamp=1778959800000",
+      "tokenAddress": "CougFoQHoEkC47tc4DDrxwcuw5YzsBCfdiQoLexfpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/cougfoqhoekc47tc4ddrxwcuw5yzsbcfdiqolexfpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "$BABYELON LIVE on PUMPFUN",
+      "header": "https://cdn.dexscreener.com/cms/images/UWDJebXoZmo6R7-I?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "lgq_52uQ57YPdLVT",
+      "links": [
+        {
+          "url": "https://babyelon.fun"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1997427149771309288"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/AncN5jxzGBM6D2o9utvnBt6S7FX5swC3484D2wk7pump?timestamp=1778959800000",
+      "tokenAddress": "AncN5jxzGBM6D2o9utvnBt6S7FX5swC3484D2wk7pump",
+      "totalAmount": 110,
+      "url": "https://dexscreener.com/solana/ancn5jxzgbm6d2o9utvnbt6s7fx5swc3484d2wk7pump"
+    },
+    {
+      "amount": 100,
+      "chainId": "solana",
+      "description": "building the most |secure| meme on @PumpFun\n\neveryone had to take profits sir, we just bring attention to it.\n\nif you dyor and want to return to memes/community:\n\nupdate pfp. update name to \"/https \"xxx\"/\n\n< know what u Hold, dont trade Emotions. trade Conviction.  Repeat it. >\n\nlets save the trenches. \none meme, one dream.",
+      "header": "https://cdn.dexscreener.com/cms/images/eP4oaEmepjcyNpC0?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "108f6ca8e68018278057bc46b1507ecec55e2a0d5f233acb4727338efc52f92a",
+      "links": [
+        {
+          "url": "https://linktr.ee/pumpaa"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/httpsonsol"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/https_solana"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump?timestamp=1778959800000",
+      "tokenAddress": "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+      "totalAmount": 150,
+      "url": "https://dexscreener.com/solana/7sgdnqsvugpahh6qyxb3g5gsdk9fazzm299kycxspump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "ICED OUT 100\nThe runner you have been waiting for!\nBacked by the ICED OUT community.\n\nHere to get it to where it\u2019s destined to be!\nThe White House and all the major crypto exchanges and much more / news/influencers/rappers/producers and of course Drake has mentioned ICED OUT\n\nWe keep it 100",
+      "header": "https://cdn.dexscreener.com/cms/images/0CLPQwYbFWA5Id-q?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "W5j0ZeGaRgng0gzq",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1984801207362195573"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DgPmVDbYStvBfxEHdXiMFJmJQoRTwn4pry8AViBFpump?timestamp=1778959800000",
+      "tokenAddress": "DgPmVDbYStvBfxEHdXiMFJmJQoRTwn4pry8AViBFpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/dgpmvdbystvbfxehdximfjmjqortwn4pry8avibfpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "header": "https://cdn.dexscreener.com/cms/images/FlSr86P5tCRB1ELd?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "Adrb6JzS0mcrDk1C",
+      "links": [
+        {
+          "url": "https://page-328-congress-gov.com/congressional-record/volume-172/issue-83/house-section/article/H3547-1?hl=memecoin&s=3&r=1#:~:text=For%20example%2C%20Mr.%20Speaker%2C%20take%20Mr.%20Elon%20Musk.%20Mr.%20Musk%20has%20used%20his%0Aplatform%2D%2Dthe%20largest%20megaphone%20in%20private%20hands%2D%2Dto%20promote%20a%20coin%0Acalled%20Dugecoin%2C%20a"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1976359223316422730"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/ojxQ8o7p4ybMLxk9BkmrvMPCyjeKe6HRctbrzsLpump?timestamp=1778959800000",
+      "tokenAddress": "ojxQ8o7p4ybMLxk9BkmrvMPCyjeKe6HRctbrzsLpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/ojxq8o7p4ybmlxk9bkmrvmpcyjeke6hrctbrzslpump"
+    },
+    {
+      "amount": 50,
+      "chainId": "solana",
+      "description": "In the sacred cradle of Hiratsuka Hachimangu, where sixteen centuries of silence bowed to the divine, the miracle foal Yae drew her first breath beneath the cherry blossoms on April 14, 2026.\nA living poem of renewal, daughter of wind-kissed Satsuki and steadfast Kochi, she emerged as the first sacred horse born upon these grounds in over 1,600 years.\nClad in warm earth-brown and named for the eight-layered grace of \u516b\u91cd\u2014double-petaled fortune and heavenly gates flung wide\u2014she carries prayers upon her tiny hooves.\nIn her bright eyes dances the eternal promise: even after ages of longing, the gods birth anew what is pure and unbound.\nA trembling spark of thunder, echoing through eternity.\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b",
+      "header": "https://cdn.dexscreener.com/cms/images/q9OuJIt7VPZ-WTqh?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "73JlFgv2VLfKU3nn",
+      "links": [
+        {
+          "url": "https://news.livedoor.com/article/detail/31288580/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2014944929664139742"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/GbuHq6UTNUp8CaFsoPgUhxpPBnkVXGepDHgFhN2kpump?timestamp=1778959800000",
+      "tokenAddress": "GbuHq6UTNUp8CaFsoPgUhxpPBnkVXGepDHgFhN2kpump",
+      "totalAmount": 100,
+      "url": "https://dexscreener.com/solana/gbuhq6utnup8cafsopguhxppbnkvxgepdhgfhn2kpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "The OG DickButt",
+      "header": "https://cdn.dexscreener.com/cms/images/H6e8G1wQ4OYek75p?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "YQ4MTFcI5TBV2bT-",
+      "links": [
+        {
+          "url": "https://ogdickbutt.xyz"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/the_og_dickbutt"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/2p6PYHMVb97RrRyf7p98dPsBZCL5HxVgQYxQHDPjo4d5?timestamp=1778959800000",
+      "tokenAddress": "2p6PYHMVb97RrRyf7p98dPsBZCL5HxVgQYxQHDPjo4d5",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/2p6pyhmvb97rrryf7p98dpsbzcl5hxvgqyxqhdpjo4d5"
+    },
+    {
+      "amount": 100,
+      "chainId": "solana",
+      "description": "BEPE",
+      "header": "https://cdn.dexscreener.com/cms/images/mdxFz26nFabzfuun?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "wTEa8LijOQLVRw7W",
+      "links": [
+        {
+          "url": "https://bepe.online/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/BEPE_ONSOLANA"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/bepecoinportal"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/HFTUnLruD1y7SaPSQPBAEGV3R1ThP4fZcNrSwmZ6pump?timestamp=1778959800000",
+      "tokenAddress": "HFTUnLruD1y7SaPSQPBAEGV3R1ThP4fZcNrSwmZ6pump",
+      "totalAmount": 500,
+      "url": "https://dexscreener.com/solana/hftunlrud1y7sapsqpbaegv3r1thp4fzcnrswmz6pump"
+    },
+    {
+      "amount": 100,
+      "chainId": "solana",
+      "description": "BEPE",
+      "header": "https://cdn.dexscreener.com/cms/images/mdxFz26nFabzfuun?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "wTEa8LijOQLVRw7W",
+      "links": [
+        {
+          "url": "https://bepe.online/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/BEPE_ONSOLANA"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/bepecoinportal"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/HFTUnLruD1y7SaPSQPBAEGV3R1ThP4fZcNrSwmZ6pump?timestamp=1778959800000",
+      "tokenAddress": "HFTUnLruD1y7SaPSQPBAEGV3R1ThP4fZcNrSwmZ6pump",
+      "totalAmount": 500,
+      "url": "https://dexscreener.com/solana/hftunlrud1y7sapsqpbaegv3r1thp4fzcnrswmz6pump"
+    }
+  ],
+  "elapsed_seconds": 0.28784894943237305,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit-limit": null,
+    "ratelimit-remaining": null,
+    "ratelimit-reset": null,
+    "retry-after": null
+  },
+  "status_code": 200,
+  "url": "https://api.dexscreener.com/token-boosts/latest/v1"
+}

@@ -1,0 +1,584 @@
+{
+  "body": [
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "energycoin",
+      "header": "https://cdn.dexscreener.com/cms/images/ZvFX-m9nQ3ZIbgdn?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/BuFy4jDg9GrwR0jm?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1956440811585015914"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DmW8PMkwkTTTaMXKA4wi9nSHX8p37ri3e8pWVQmLpump?timestamp=1778959800000",
+      "tokenAddress": "DmW8PMkwkTTTaMXKA4wi9nSHX8p37ri3e8pWVQmLpump",
+      "updatedAt": "2026-05-16T19:30:04.283Z",
+      "url": "https://dexscreener.com/solana/dmw8pmkwktttamxka4wi9nshx8p37ri3e8pwvqmlpump"
+    },
+    {
+      "chainId": "base",
+      "cto": false,
+      "description": "Decentralized P2P AI Inference capital market",
+      "header": "https://cdn.dexscreener.com/cms/images/OhA_kW3wf6sUuLJR?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/RP-KAP98uzz5tp42?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://openseed.gg/"
+        },
+        {
+          "label": "Docs",
+          "url": "https://docs.openseed.gg/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/OpenSeed_gg"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/openseed_gg"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0xf74d524bb35cb312d9d871601208ca5483817ba3?timestamp=1778959800000",
+      "tokenAddress": "0xf74D524bb35cb312d9d871601208Ca5483817bA3",
+      "updatedAt": "2026-05-16T19:30:38.732Z",
+      "url": "https://dexscreener.com/base/0xf74d524bb35cb312d9d871601208ca5483817ba3"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "icon": "https://cdn.dexscreener.com/cms/images/Nk_B_tH7T3Jm3NQo?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/spokfunxyz"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/EGCE75abRTCdxiSgXJrAFk8DzDmEne8EoDXJBstXpump?timestamp=1778959800000",
+      "tokenAddress": "EGCE75abRTCdxiSgXJrAFk8DzDmEne8EoDXJBstXpump",
+      "updatedAt": "2026-05-16T19:26:08.686Z",
+      "url": "https://dexscreener.com/solana/egce75abrtcdxisgxjrafk8dzdmene8eodxjbstxpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "header": "https://cdn.dexscreener.com/cms/images/N-EkPyY8tbi5XC69?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/OU4d25PODye7GohT?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://dayoneventures.xyz/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/jncquant/status/2055727429059006954"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Zi7JtAT7WvvCsis7ctqNa9iHY5ivPvb3MQzDhYMpump?timestamp=1778959800000",
+      "tokenAddress": "Zi7JtAT7WvvCsis7ctqNa9iHY5ivPvb3MQzDhYMpump",
+      "updatedAt": "2026-05-16T19:20:59.930Z",
+      "url": "https://dexscreener.com/solana/zi7jtat7wvvcsis7ctqna9ihy5ivpvb3mqzdhympump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "",
+      "header": "https://cdn.dexscreener.com/cms/images/ZKB2k0_ZhajiJ-n-?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/_DPTeiyyOuyXK9vK?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2037241299019919604"
+        },
+        {
+          "type": "instagram",
+          "url": "https://www.instagram.com/p/DL7nyaCsl1Y/"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/HmCgSMgGm1GVnfnyAw1bwaxjWwX5EAueFNfZ4PtRpump?timestamp=1778959800000",
+      "tokenAddress": "HmCgSMgGm1GVnfnyAw1bwaxjWwX5EAueFNfZ4PtRpump",
+      "updatedAt": "2026-05-16T19:20:55.586Z",
+      "url": "https://dexscreener.com/solana/hmcgsmggm1gvnfnyaw1bwaxjwwx5eauefnfz4ptrpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "",
+      "header": "https://cdn.dexscreener.com/cms/images/rjJNllPoDXeM37S0?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/3Vznwwtz6UzqaaTH?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/RabbiDeploys/status/2055727986263879897"
+        },
+        {
+          "type": "instagram",
+          "url": "https://www.instagram.com/p/DL7nyaCsl1Y/"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/ALSYyhSNiNS7H8c7X1LLd5p9VtsUNRTTDvHPUbtwpump?timestamp=1778959800000",
+      "tokenAddress": "ALSYyhSNiNS7H8c7X1LLd5p9VtsUNRTTDvHPUbtwpump",
+      "updatedAt": "2026-05-16T19:20:08.698Z",
+      "url": "https://dexscreener.com/solana/alsyyhsnins7h8c7x1lld5p9vtsunrttdvhpubtwpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "",
+      "header": "https://cdn.dexscreener.com/cms/images/hkPzAqAQnts9zBqd?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/4jd1zbI--0ONify1?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "telegram",
+          "url": "https://t.me/actb_soltg"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/9BhDBb6CjXow1GBptru8iu4KWCUUij2WGQeJd77wpump?timestamp=1778959800000",
+      "tokenAddress": "9BhDBb6CjXow1GBptru8iu4KWCUUij2WGQeJd77wpump",
+      "updatedAt": "2026-05-16T19:17:08.750Z",
+      "url": "https://dexscreener.com/solana/9bhdbb6cjxow1gbptru8iu4kwcuuij2wgqejd77wpump"
+    },
+    {
+      "chainId": "base",
+      "cto": false,
+      "description": "Token Marketplace buy and sell bankr and clanker coin rights.",
+      "header": "https://cdn.dexscreener.com/cms/images/omWvkMTtdsLDxQVN?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/28kR1m5eurY13A1U?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://www.tokenmarketplace.shop/"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x935e13a28849095db45e63040f109c34b757aba3?timestamp=1778959800000",
+      "tokenAddress": "0x935e13A28849095dB45E63040F109c34b757ABA3",
+      "updatedAt": "2026-05-16T19:11:08.729Z",
+      "url": "https://dexscreener.com/base/0x935e13a28849095db45e63040f109c34b757aba3"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "icon": "https://cdn.dexscreener.com/cms/images/65r8XRHwOySRqB8h?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://www.europump.fun/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/SugusTrader/status/2055716458936607039"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/6Zmda8VARsoZW3zQ9U6SVewn4b3ParuRgzghJSmKpump?timestamp=1778959800000",
+      "tokenAddress": "6Zmda8VARsoZW3zQ9U6SVewn4b3ParuRgzghJSmKpump",
+      "updatedAt": "2026-05-16T19:08:08.648Z",
+      "url": "https://dexscreener.com/solana/6zmda8varsozw3zq9u6svewn4b3parurgzghjsmkpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "",
+      "header": "https://cdn.dexscreener.com/cms/images/yNllnF5NOTVJ4vDN?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/ZwIo6LAiuaefP1vZ?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1979044393689715153"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/4hsBJP7RKeD8EZEYdZELQabGVse3szujCponbhmjByyA?timestamp=1778959800000",
+      "tokenAddress": "4hsBJP7RKeD8EZEYdZELQabGVse3szujCponbhmjByyA",
+      "updatedAt": "2026-05-16T19:06:33.890Z",
+      "url": "https://dexscreener.com/solana/4hsbjp7rked8ezeydzelqabgvse3szujcponbhmjbyya"
+    },
+    {
+      "chainId": "ethereum",
+      "cto": false,
+      "description": "AstroDogeX ($ADX) follows a classic memecoin narrative on the Ethereum blockchain, blending the viral Dogecoin/Shiba Inu meme culture that combines the following \u201cAstro\u201d, \u201cDoge\u201d and \u201cX\u201d elements:\n\n**Astro** = reference to Asteroid, paying homage to the first Shiba Inu flown into space on a SpaceX rocket originally designed by Liv Perretto as a Zero-G indicator for a Polaris Dawn mission, later made as the official mascot for SpaceX.\n\n**Doge** = often tied to Elon Musk, which started off as a memecoin back in December 2013 as Dogecoin, a legendary memecoin known worldwide.\n\n**X** = X, formerly Twitter (originated February 2007) and SpaceX (originated April 2009) owned by Elon Musk.\n\nAstroDogeX follows a classic meme coin narrative: hype around \u201cto the moon\u201d potential, Dogecoin-like vibes, AI/meme immersion, and space themes. It\u2019s not here to pvp but compliment its Shiba counterpart which was deployed 10th September 2024.",
+      "header": "https://cdn.dexscreener.com/cms/images/zUgwiButZ4EMrcrH?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/H0ndUdhwwJFv-sx4?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/astrodogexcto"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/AstroDogeXCTO"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/ethereum/0x93e32925b4e4f1d63b1db963d6aa246957ec7c46?timestamp=1778959800000",
+      "tokenAddress": "0x93E32925B4E4f1d63b1Db963D6aa246957ec7C46",
+      "updatedAt": "2026-05-16T19:06:38.704Z",
+      "url": "https://dexscreener.com/ethereum/0x93e32925b4e4f1d63b1db963d6aa246957ec7c46"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "onchain GAN",
+      "header": "https://cdn.dexscreener.com/cms/images/aGDYFbX1Fr-J7QEJ?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/gtA6g52CAGTmcxO-?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/icallaths/status/2055725021650186359"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Hf6Kyck41eJDJtwCyV84bhDhqL6BKYdx9p97C4RApump?timestamp=1778959800000",
+      "tokenAddress": "Hf6Kyck41eJDJtwCyV84bhDhqL6BKYdx9p97C4RApump",
+      "updatedAt": "2026-05-16T19:05:08.041Z",
+      "url": "https://dexscreener.com/solana/hf6kyck41ejdjtwcyv84bhdhql6bkydx9p97c4rapump"
+    },
+    {
+      "chainId": "ethereum",
+      "cto": false,
+      "description": "Obol is a collection of tools, teams, and communities dedicated to scaling Ethereum by strengthening the security, resilience, economy, and decentralisation of the network; through the development and deployment of Distributed Validators, the Obol Stack, and the Obol Agent framework. The Distributed Validator middleware client, Charon, boosts the security, resilience, and decentralisation of the Ethereum validator network by enabling \u201csquad staking\u201d. The Obol Stack boosts the economy and decentralisation of the Ethereum application layer, by allowing users to run Ethereum applications locally, and to interact with them and the chain by leveraging their Obol Agents.",
+      "header": "https://cdn.dexscreener.com/cms/images/rFnVQvzqIWoS76VD?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/jwYGU9zc-MJp_fKE?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/ObolBuild"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/ethereum/0x14036ca9176b97abb19f4abd408ff2aff29ba67b?timestamp=1778959800000",
+      "tokenAddress": "0x14036cA9176b97abb19f4AbD408Ff2AFF29BA67b",
+      "updatedAt": "2026-05-16T19:03:38.720Z",
+      "url": "https://dexscreener.com/ethereum/0x14036ca9176b97abb19f4abd408ff2aff29ba67b"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "",
+      "header": "https://cdn.dexscreener.com/cms/images/-bbEIzpcb9YA1G9W?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/VLveKvg0pdH_gYMl?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://x.com/joelhooks/status/2055710343230611814"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/LastManOnchain/status/2055725261883113827"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/HVyHCzxaecUEBi1X4BZELQh9uip5DXreWKxY8crXpump?timestamp=1778959800000",
+      "tokenAddress": "HVyHCzxaecUEBi1X4BZELQh9uip5DXreWKxY8crXpump",
+      "updatedAt": "2026-05-16T19:14:08.747Z",
+      "url": "https://dexscreener.com/solana/hvyhczxaecuebi1x4bzelqh9uip5dxrewkxy8crxpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "Going LIVE Psyoping people into buying this coin.  \n\nNo one is actually running this narrative properly, the whole point of the creator of the 90MIL Troll coin creator posting this Psyop dog is because it's related to the Psyoping occurring within memecoins.  \n\nSo I thought it would be even more memeable to take his ONLY other meme endorsed and Psyop people LIVE into buying the coin itself.  \n\nWill pay Dex at 15k, and do Dex boosts at bond.",
+      "header": "https://cdn.dexscreener.com/cms/images/2mvY0r-zklTjjIgP?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/MgBJxstRSThpTMs2?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/gevinnewscum/status/2055723986718188021?s=20"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/HzJ73Pi86xmTppF4Vkqqdz6xPJcxsSLdwRhWuzpLpump?timestamp=1778959800000",
+      "tokenAddress": "HzJ73Pi86xmTppF4Vkqqdz6xPJcxsSLdwRhWuzpLpump",
+      "updatedAt": "2026-05-16T19:02:32.605Z",
+      "url": "https://dexscreener.com/solana/hzj73pi86xmtppf4vkqqdz6xpjcxssldwrhwuzplpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "",
+      "header": "https://cdn.dexscreener.com/cms/images/_4Uzec-wJyu4Vo2P?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/Lm5O93GseHKy-TdC?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://x.com/ronaldingram/status/1858987418898297126?s=46"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1995929604801114191"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/7ym3MgrvZFiLeFDXuRrRpfV4KMAPrUzkWvXAy6zUpump?timestamp=1778959800000",
+      "tokenAddress": "7ym3MgrvZFiLeFDXuRrRpfV4KMAPrUzkWvXAy6zUpump",
+      "updatedAt": "2026-05-16T19:18:38.634Z",
+      "url": "https://dexscreener.com/solana/7ym3mgrvzfilefdxurrrpfv4kmapruzkwvxay6zupump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "What if $BabyUnc flips $unc?\n\n0.32% to flip unc (there is a chance)",
+      "header": "https://cdn.dexscreener.com/cms/images/PE8dc7PmPMTTo4-W?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/gBwrfMG5_xk7705o?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1988481789015314541"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/4e9jjRuhUFfcQ6BThG92CBeGHRRe17t4PqQFWVEcpump?timestamp=1778959800000",
+      "tokenAddress": "4e9jjRuhUFfcQ6BThG92CBeGHRRe17t4PqQFWVEcpump",
+      "updatedAt": "2026-05-16T18:56:38.531Z",
+      "url": "https://dexscreener.com/solana/4e9jjruhuffcq6bthg92cbeghrre17t4pqqfwvecpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "TRUMP\nPEPE\nThe rarest card in the deck. Donald Trump fused with Pepe the Frog \u2014 green skin, golden hair, one red tie, and a permanent smug grin. Pulled fresh from the bonding curve.",
+      "header": "https://cdn.dexscreener.com/cms/images/-x_AmWNhqGed4eRb?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/7GOikFfJAkfdB7I6?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://trumppepe-9zo.pages.dev/"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/2uoCS85SJhiT8juJxbXepqkPdWbaVMLLdfD6djmvpump?timestamp=1778959800000",
+      "tokenAddress": "2uoCS85SJhiT8juJxbXepqkPdWbaVMLLdfD6djmvpump",
+      "updatedAt": "2026-05-16T18:57:38.724Z",
+      "url": "https://dexscreener.com/solana/2uocs85sjhit8jujxbxepqkpdwbavmlldfd6djmvpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "Welcome to the BTC6900, an advanced blockchain cryptography token with limitless possibilities and scientific utilization.",
+      "header": "https://cdn.dexscreener.com/cms/images/3pdFOcr8m_FaUYiR?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/cf-lyLT_qQxrCfsd?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://btc6900sol.xyz"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/Bitcoin6900SolX"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/bitcoin6900_sol"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/J1dhFo6jJ5APNuaZvzs14ixRKwU3LWU4Yf226PCSpump?timestamp=1778959800000",
+      "tokenAddress": "J1dhFo6jJ5APNuaZvzs14ixRKwU3LWU4Yf226PCSpump",
+      "updatedAt": "2026-05-16T18:57:38.724Z",
+      "url": "https://dexscreener.com/solana/j1dhfo6jj5apnuazvzs14ixrkwu3lwu4yf226pcspump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "on the name\nfelix hausdorff was a german mathematician who spent the first half of the twentieth century working out what it meant for a shape to have a dimension that is not a whole number. a line, he wrote, has dimension one. a plane has dimension two. a coastline, with bays inside bays inside bays, each smaller than the last and shaped roughly like the larger ones, has a dimension somewhere between the two, a number that captures how much detail the shape carries as you zoom into it. the idea was published in 1918, decades before anyone called such an object a fractal and decades before any computer existed that could draw one. hausdorff did not live to see his theorem applied to anything. he and his wife took their own lives in 1942 to avoid deportation to a nazi camp. fifty years later benoit mandelbrot recovered the construction, gave it the name it carries now, and showed that the non-integer dimensions hausdorff had defined as a piece of pure measure theory were in fact the right way to describe coastlines, lungs, lightning, river deltas, turbulent flow, and, eventually, the price of risky assets. the dimension that bears hausdorff's name has outlived everything else about him.\n\non roughness\nwhat does an honest market look like? traders, economists, and protocol designers have spent a century looking for a number that distinguishes real order flow from synthetic order flow, and the cleanest answer does not come from finance. it comes from geometry. a price trajectory, plotted against time, is a path. the path has a fractal dimension, a number that measures how much detail it contains as the time resolution gets finer. a perfectly smooth trend has dimension one, because zooming in reveals nothing new. pure white noise has dimension approaching two, because every scale contains the same density of detail as every other scale. real markets, when they are honest, sit somewhere between these two extremes, and the exact place they sit is not arbitrary.\n\nthe hurst exponent is a constant that characterizes how much a stochastic process drifts versus how much it noises. for processes with no memory, no manipulation, and no coordinated flow (the kind of process you would expect from a market made up entirely of independent participants acting on independent information), the hurst exponent sits near 0.618, which is, not coincidentally, the inverse of the golden ratio. the fractal dimension of such a process is two minus the hurst exponent, which works out to approximately 1.382. this is the dimension of an unmanipulated market. it is not a target. it is what naturally happens when nothing is being done to the price.\n\na market that drifts above this dimension is being chopped, wash traded, sandwich attacked, or otherwise subjected to coordinated high frequency noise that adds roughness without adding information. a market that drifts below it is being walked, with a whale or a coordinated group pushing the price in a straight line and suppressing the natural noise the market would otherwise produce. in both cases the dimension deviates from 1.382, and in both cases the deviation is measurable, which means it can be priced, which means it can be charged for.\n\non hooks\nin november 2024, uniswap shipped its fourth major protocol revision and introduced a primitive the previous three versions had deliberately refused to expose. the primitive was the hook, a contract that pool deployers could attach to the moments immediately before and after a swap, immediately before and after a liquidity modification, and immediately before and after the pool's initialization. the hook ran inside the same transaction as the swap, with access to the swap's parameters, the pool's state, and the authority to modify both. it was the first time in the history of automated market makers that anyone other than the protocol itself could write logic that executed during a trade.\n\nwhat hooks made possible was a class of mechanisms that had been theoretically describable for years but operationally unbuildable. dynamic fee curves that responded to volatility in real time. directional fees that charged buyers and sellers asymmetrically based on the recent imbalance of flow. mev capture mechanisms that priced in the value of the arbitrage a swap was about to create and rebated it to liquidity providers. limit orders, time weighted average makers, oracle integrations, and the entire surface of what came to be called intent based design. before v4 every one of these mechanisms required either a fork of the underlying pool or a router contract that wrapped the pool from the outside and could be bypassed by sophisticated traders calling the pool directly. v4 hooks made the mechanism inseparable from the pool. there was no version of trading through the pool that did not invoke the hook, because the pool's swap function called the hook itself, in line, before settlement.\n\nsolana arrived at the same primitive through a different door. the token-2022 program, deployed in 2023 as a successor to the original spl token program, introduced a feature called the transfer hook extension. the extension allowed a mint creator to attach a program that would be invoked on every transfer of the underlying token, regardless of which program initiated the transfer. where uniswap's hook fires when a specific pool's swap function is called, solana's transfer hook fires one layer lower, at the token movement itself. the hook runs when a dlmm pool executes a swap. it also runs when an arbitrage bot routes around the pool through a different venue. it runs when a holder sends the token to a friend, when a market maker rebalances inventory between two accounts, when a liquidator seizes collateral. there is no path through which the token moves that does not pass through the hook, because the hook is part of what the token is.\n\nthis is a stricter guarantee than uniswap v4 provides. v4 hooks are pool scoped. a token that trades on a hooked v4 pool can also trade on a v3 pool, on a v2 pool, on a balancer pool, on a curve pool, on any of the hundreds of forks of any of those, and the hook on the v4 pool sees none of it. the v4 hook is the strongest commitment you can make about behavior within a single pool, but it is silent about everything outside that pool. solana's transfer hook is the opposite. it is silent about which pool, which venue, which route, and instead commits to the only thing that matters, which is that no token can move without the hook running first. hausdorff exists because of this distinction. the protocol's correctness depends on observing every price discovery event, and on ethereum it would be possible for a sophisticated trader to route around the observation. on solana it is not possible.\n\non the program\nhausdorff is a solana mainnet program that does one thing. it is deployed as a token-2022 transfer hook on the hausdorff mint, registered as an extension on a meteora dlmm pool for the hausdorff/sol pair, and given no other responsibilities. on every swap routed through the dlmm pool, the pool's core program invokes the spl token-2022 transfer instruction, which in turn invokes hausdorff's execute instruction through cross program invocation before the transfer settles. the program is given the swap's amount, the input and output mints, the source and destination accounts, and a set of extra accounts declared in the mint's extra account metas list at deployment. it returns a single value, the surcharge to be withheld from the input amount before the transfer completes.\n\non each invocation the program reads the dlmm pool's currently active bin id and the bin's corresponding price, both stored in the pool's account data and fetched in a single account read. it appends the (slot, bin_id, price) tuple to a 256 entry circular buffer maintained in a program derived address with seed [\"bins\", mint_pubkey]. the buffer is a fixed layout struct that fits inside a single pda account well under the ten kilobyte limit, so the per swap account allocation is zero. every write reuses the same slot in the same account. the buffer's head pointer advances on each write, wrapping at 256, and the program maintains a parallel array of cached sub window length sums that are carried forward from the previous swap so the dimension estimate can be updated in constant time rather than recomputed from scratch.\n\nwith the buffer updated, the program computes a rolling estimate of the price trajectory's fractal dimension using the higuchi method. higuchi is one of several known algorithms for estimating fractal dimension from a discrete time series, and it is the one that fits inside a solana program's compute budget because it can be expressed entirely in terms of summed absolute differences between points at fixed lag intervals, with no exponentials and no logarithms beyond a single final fit. the method evaluates the curve's length at six lag values, 8, 16, 32, 64, 128, and 256 slots, and fits a line through the log log plot of length versus lag. the slope of that line, negated, is the dimension. the fit is performed in anchor's i128 fixed point arithmetic with a precomputed log table for the six lag values, so the entire estimate completes in a deterministic and gas bounded sequence of integer operations that the program has measured at under one hundred eighty thousand compute units in the steady state.\n\non the surcharge\nthe program compares the current dimension estimate to the natural reference of 1.382, takes the absolute difference, and squares it. the result is multiplied by a fixed scaling constant baked into the program at deployment, and the product is the dynamic surcharge applied to the swap. the base swap fee is whatever the meteora dlmm pool's bin step defines for that pair, and the dynamic component sits on top of it. the surcharge is withheld from the swap's input amount through the token-2022 transfer hook's standard return value, which the token program respects atomically before the transfer balance is updated. a swap that arrives during a smoothly walked trend, with dimension near 1.05, pays roughly fourteen times the base fee. a swap that arrives during a wash traded chop, with dimension near 1.85, pays roughly twenty two times. a swap that arrives during conditions near the natural dimension pays nothing beyond the base.\n\nthe surcharge is routed to a redistribution vault, a separate program derived address controlled by the hook program and holding a single immutable allocation function. the vault receives the surcharge tokens at the moment the swap settles and accumulates them across many swaps. when the vault's balance crosses a threshold set at deployment, the program distributes the accumulated balance in two parts. half is paid to the liquidity providers whose positions span the bins that were active during the surcharged swaps, weighted by the time and liquidity integrated exposure of each position to those bins. the other half is paid to holders of the underlying token, weighted by a holding time score computed from each wallet's first acquisition slot, which is stored in a per holder pda written on first receipt and never updated thereafter except to extend its tenure.\n\na holder who has held for a million slots receives a larger share than a holder who has held for ten thousand, and a holder who sells loses their score entirely, resetting to zero on next acquisition. the asymmetry is intentional. the protocol charges the wallets that introduce roughness or smoothness against the natural dimension, and it pays the wallets that have done neither for the longest. the surcharge is not a tax. it is a transfer from one population to another, mediated by a measurement that neither population can directly observe but both populations affect.\n\non the substrate\nsolana is the right substrate for this because three of its properties combine to make the measurement legible. the slot time is roughly four hundred milliseconds, fast enough that a price trajectory's fractal dimension resolves in seconds rather than minutes, and a manipulation detected in slot n can be priced into the swap that occurs in slot n plus one. the token-2022 transfer hook extension is atomic with the transfer itself, so there is no window between the dimension computation and the surcharge application during which a sophisticated actor could front run the protocol's own measurement. and the program's storage model, with fixed layout accounts at deterministic addresses, means the entire dimension state is visible to any client without traversing event logs or reconstructing history from chain replays. a wallet can read the buffer, run the higuchi method itself, and confirm the dimension the hook is about to charge against. nothing about the protocol requires trust in the team, because there is no team to trust.\n\nthe program is deployed through the bpf upgradeable loader with its upgrade authority set to None at deployment, which seals the on chain bytecode against modification. there is no admin key, no migration function, no multisig controlling the vault, no proxy redirecting calls to a newer implementation, no governance contract that can be voted into existence later. the program's address is fixed. the bytecode at that address is fixed. the allocation function inside the vault is fixed. the only variable is the dimension, and the dimension is whatever the chain produces.\n\non the curve\nthe bonding curve plotted above is not decorative. it is the actual minting function written into the program. total supply equals twenty one million multiplied by the quantity one minus e raised to the negative cumulative sol divided by eight hundred fifty. the curve approaches twenty one million asymptotically and never reaches it. minting does not stop. each successive unit of supply costs exponentially more cumulative sol than the unit before it, so the practical effect is that the supply approaches the cap at a rate that slows without bound, and the marginal cost of the next token approaches infinity without ever arriving there. there is no graduation event, no listing milestone, no cliff at which the bonding curve hands off to a separate market. the curve is the same on the first slot of deployment and on the ten millionth slot after. the same function governs both the price a buyer pays and the price the protocol records as the active bin for the dimension calculation, which means the curve and the measurement are reading from the same source.\n\non the invariant\nthere is one constant inside the program, the natural dimension 1.382, and one observable computed at every slot, the running dimension of the price trajectory. when the observable approaches the constant, the protocol does nothing. when the observable deviates from the constant, the protocol charges proportionally to the square of the deviation and pays the holders who walked the curve honestly. there is no team. there is no treasury. there is no governance forum, no token vote, no parameter that can be changed by anyone after deployment. the protocol is the measurement, and the measurement is the chain.",
+      "header": "https://cdn.dexscreener.com/cms/images/EgPNl-2GEQIPo69s?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/yfx9hxPWipm6LhgA?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://hausdorff.app/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/hausdorffapp"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/ENRAEN9assGLHU2QQCo4cAv818mDrMkb6f6pG8hHpump?timestamp=1778959800000",
+      "tokenAddress": "ENRAEN9assGLHU2QQCo4cAv818mDrMkb6f6pG8hHpump",
+      "updatedAt": "2026-05-16T18:46:59.611Z",
+      "url": "https://dexscreener.com/solana/enraen9assglhu2qqco4cav818mdrmkb6f6pg8hhpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "On-chain dividend engine for tokenized equities. Hold $AUTOSTONKS \u2192 receive proportional xStock distributions every 30 min on Solana.",
+      "header": "https://cdn.dexscreener.com/cms/images/zfVaW2jkIkMH5wEJ?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/CaxO9Z-lTk-V7WZl?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://www.autostonks.fun/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/autostonks"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/9wZnepCjc5QP1nXmuhKZdFV9NovfUPFy78p8BjGqpump?timestamp=1778959800000",
+      "tokenAddress": "9wZnepCjc5QP1nXmuhKZdFV9NovfUPFy78p8BjGqpump",
+      "updatedAt": "2026-05-16T18:43:26.127Z",
+      "url": "https://dexscreener.com/solana/9wznepcjc5qp1nxmuhkzdfv9novfupfy78p8bjgqpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "Memecoins are right now is Ripping, the trenches are showing more life. It\u2019s looking like the rough times are starting to end. Going Live On Pumpfun, Paying DEX at 15k doing airdrops and so much more Ur Gonna Make It. $UGMI",
+      "header": "https://cdn.dexscreener.com/cms/images/ojOLyw3f3E-jvB9O?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/NUfhGP_mAY3s2FC1?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2028673398465876107"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/CWVYoP7kPa7JdeN1gp52xE2vNNEqMK4EvKTtNocepump?timestamp=1778959800000",
+      "tokenAddress": "CWVYoP7kPa7JdeN1gp52xE2vNNEqMK4EvKTtNocepump",
+      "updatedAt": "2026-05-16T18:43:22.841Z",
+      "url": "https://dexscreener.com/solana/cwvyop7kpa7jden1gp52xe2vnneqmk4evkttnocepump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "",
+      "header": "https://cdn.dexscreener.com/cms/images/8CRGuuR2CESw6p9w?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/NHoe4ekuD6IZ25gg?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://www.threads.com/@testingcatalog/post/DV69d3zDWPO?xmt=AQG0FtO7PuDF1qVKyWds9zZs7JtkuTbnqSkwgw_a9l6Tfg"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/TheSourceS0L/status/2055717289438159126"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/HGvgD7yTj1J26z8iWAHsfcK8pW462mW3FWZ1fmQHpump?timestamp=1778959800000",
+      "tokenAddress": "HGvgD7yTj1J26z8iWAHsfcK8pW462mW3FWZ1fmQHpump",
+      "updatedAt": "2026-05-16T18:35:08.634Z",
+      "url": "https://dexscreener.com/solana/hgvgd7ytj1j26z8iwahsfck8pw462mw3fwz1fmqhpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "Satrio \"Rio\" Wiratama is making history as the first giant panda born in Indonesia.",
+      "header": "https://cdn.dexscreener.com/cms/images/j2PKuuYeQskuU3iT?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/FPVkG1G7z_9BYcVC?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://youtu.be/tl6UbW_DuB8?si=nHS4QpMz7hFuRqIs"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1966619095581045116"
+        },
+        {
+          "type": "instagram",
+          "url": "https://www.instagram.com/p/DYYijpbEzFI/?igsh=Mm53d2lrbms3b2oz"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DN9m8QwsqVmgs5NeLd9YtHyVxvd23rA7rSnkAZS7pump?timestamp=1778959800000",
+      "tokenAddress": "DN9m8QwsqVmgs5NeLd9YtHyVxvd23rA7rSnkAZS7pump",
+      "updatedAt": "2026-05-16T19:15:52.260Z",
+      "url": "https://dexscreener.com/solana/dn9m8qwsqvmgs5neld9ythyvxvd23ra7rsnkazs7pump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "Spike the peaceful turtle",
+      "header": "https://cdn.dexscreener.com/cms/images/YPpJXj5rtzMs1_yP?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/almSxQTxwNbHsKEN?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://www.instagram.com/reel/DYXeoE2xTNT/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2039102187058475495"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/BpH6gTmWcm76FrTMEhZJBaMiZJsmGtKR2YMoS9UJpump?timestamp=1778959800000",
+      "tokenAddress": "BpH6gTmWcm76FrTMEhZJBaMiZJsmGtKR2YMoS9UJpump",
+      "updatedAt": "2026-05-16T19:12:38.734Z",
+      "url": "https://dexscreener.com/solana/bph6gtmwcm76frtmehzjbamizjsmgtkr2ymos9ujpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "header": "https://cdn.dexscreener.com/cms/images/1WlswBjO4nTpuKL9?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/WiiV7kG_-QA1vjck?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2027076670889533775"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Agew44YoaCAXKViEhkdfZ5CQAuqtTFPPnvzTanRTpump?timestamp=1778959800000",
+      "tokenAddress": "Agew44YoaCAXKViEhkdfZ5CQAuqtTFPPnvzTanRTpump",
+      "updatedAt": "2026-05-16T18:27:07.442Z",
+      "url": "https://dexscreener.com/solana/agew44yoacaxkviehkdfz5cqauqttfppnvztanrtpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "",
+      "header": "https://cdn.dexscreener.com/cms/images/D9nYJnR-rEkvNnlA?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/_Ubp6HJW7_XkiY5O?width=64&height=64&fit=crop&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/FjPz2G6tpe8bUNKc74tTvLdYd91GD97pxsCYEjPdpump?timestamp=1778959800000",
+      "tokenAddress": "FjPz2G6tpe8bUNKc74tTvLdYd91GD97pxsCYEjPdpump",
+      "updatedAt": "2026-05-16T18:34:16.986Z",
+      "url": "https://dexscreener.com/solana/fjpz2g6tpe8bunkc74ttvldyd91gd97pxscyejpdpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "The Baby Troll Killer.. Baby Giga Chad",
+      "header": "https://cdn.dexscreener.com/cms/images/RPVJ7g_wN1chCQGs?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/vPNz_RdR_BVFZPra?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2036629300385075414"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/BzQRmsNVgyxcUG2fDGxq7di2mzbKtKTNbJjk4EVKpump?timestamp=1778959800000",
+      "tokenAddress": "BzQRmsNVgyxcUG2fDGxq7di2mzbKtKTNbJjk4EVKpump",
+      "updatedAt": "2026-05-16T19:18:38.658Z",
+      "url": "https://dexscreener.com/solana/bzqrmsnvgyxcug2fdgxq7di2mzbktktnbjjk4evkpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "BABYCOIN",
+      "header": "https://cdn.dexscreener.com/cms/images/ztd19P8TfqRT5jrd?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/8L0QWD7oenyOC0af?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1956440811585015914"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Bvwbaee8BJdvDvKDPMauEZQBiPm44VZn7tfmUnvEpump?timestamp=1778959800000",
+      "tokenAddress": "Bvwbaee8BJdvDvKDPMauEZQBiPm44VZn7tfmUnvEpump",
+      "updatedAt": "2026-05-16T18:19:09.662Z",
+      "url": "https://dexscreener.com/solana/bvwbaee8bjdvdvkdpmauezqbipm44vzn7tfmunvepump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "In the primordial chaos of 2008, deep within the neon-lit trenches of 4chan\u2019s /v/ board, Trollface was forged in MS Paint by the legendary Whynne. Born from a cursed experiment known as Rape Rodent, Trollface became the undisputed King of Internet Mayhem \u2014 the grinning embodiment of chaos, derailing threads, spawning rage comics, and turning normies into seething rage machines with a single \u201cProblem?\u201d His power was simple yet unstoppable: pure, unfiltered trolling that spread across forums, YouTube, Reddit, and eventually the entire digital realm.\nBut every king needs a queen.\nWhile Trollface ruled the shadows, a new force was awakening. In forgotten corners of DeviantArt and early Reddit, Mrs. Troll (Trollina) manifested. With her flowing midnight hair, razor-sharp eyelashes, sly half-lidded eyes, and that same signature toothy grin \u2014 now accented with a touch of rebellious pink blush and lipstick \u2014 she was no mere side character. She was the feminine chaos incarnate. Where Trollface trolled with brute force, Mrs. Troll trolled with elegance, precision, and devastating wit. She flipped shipping wars, exposed hypocrisy in comment sections, and left trails of \u201cU Mad, Sis?\u201d that echoed for years.\nTheir legendary union happened during the Great Meme Migration of 2009\u20132010. Trollface, exhausted from solo raids, encountered Mrs. Troll mid-troll in a collapsing thread. Their eyes locked.\n\u201cProblem?\u201d he grinned.\n\u201cOnly if you can keep up, big guy,\u201d she smirked back.\nFrom that moment, they became the ultimate power couple of the meme multiverse. Together they:\n\u2022  Conquered the Rage Comic Era\n\u2022  Survived the fall of 4chan\u2019s golden age\n\u2022  Infiltrated mainstream platforms without losing their edge\n\u2022  Spawned generations of troll descendants (Troll Jr., Mini Mrs. Troll, and the elusive Glowie variants)\nThe Bullish Prophecy: Enter the Meme Coin Age\nAs the internet evolved into the blockchain, Trollface and Mrs. Troll saw the next frontier \u2014 decentralized chaos. They understood that true trolling power lies not just in laughs, but in community, virality, and generational wealth.",
+      "header": "https://cdn.dexscreener.com/cms/images/D3uWYtngYRd-qcce?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/XPg3L6G8VNCMIS2S?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1984060431036481931"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Agsfp6nZTaCfyN5YRff1FrDf6CgYMeabhVfSGzY2pump?timestamp=1778959800000",
+      "tokenAddress": "Agsfp6nZTaCfyN5YRff1FrDf6CgYMeabhVfSGzY2pump",
+      "updatedAt": "2026-05-16T18:10:36.172Z",
+      "url": "https://dexscreener.com/solana/agsfp6nztacfyn5yrff1frdf6cgymeabhvfsgzy2pump"
+    }
+  ],
+  "elapsed_seconds": 0.20563578605651855,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit-limit": null,
+    "ratelimit-remaining": null,
+    "ratelimit-reset": null,
+    "retry-after": null
+  },
+  "status_code": 200,
+  "url": "https://api.dexscreener.com/token-profiles/latest/v1"
+}

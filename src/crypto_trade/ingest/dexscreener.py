@@ -34,71 +34,46 @@ Outputs:
 from __future__ import annotations
 
 import argparse
-import json
 import time
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List
 
-import requests
-
+from crypto_trade.core.http import HttpResponse, get_json, make_session
+from crypto_trade.core.io import save_json
+from crypto_trade.core.logging import configure_logging
+from crypto_trade.core.time import now_ms, utc_now
 
 BASE = "https://api.dexscreener.com"
 CHAIN = "solana"
 DEFAULT_TOKEN = "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump"
 
-
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def now_ms() -> int:
-    return int(time.time() * 1000)
-
-
-def save_json(path: Path, obj: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, sort_keys=True, default=str), encoding="utf-8")
-
-
-def load_json_safe(text: str) -> Any:
-    try:
-        return json.loads(text)
-    except Exception:
-        return {"_raw_text": text[:4000]}
+_SESSION = make_session(user_agent="dexscreener-enrichment-test/1.0")
 
 
 def request_json(url: str, sleep_s: float, debug: bool) -> Dict[str, Any]:
-    time.sleep(sleep_s)
-    started = time.time()
-    r = requests.get(
-        url,
-        headers={
-            "accept": "application/json",
-            "user-agent": "dexscreener-enrichment-test/1.0",
-        },
-        timeout=30,
-    )
-    elapsed = time.time() - started
+    """Backwards-compatible wrapper around :func:`core.http.get_json`.
 
-    body = load_json_safe(r.text)
+    Downstream extractors depend on the ``body``/``headers``/``status_code``
+    keys, so we render the :class:`HttpResponse` into the historical dict shape.
+    """
+    time.sleep(sleep_s)
+    resp: HttpResponse = get_json(url, session=_SESSION, timeout=30, name="dexscreener")
+
+    body: Any = resp.body
+    if body is None and resp.text is not None:
+        body = {"_raw_text": resp.text}
+
     out = {
-        "url": url,
-        "status_code": r.status_code,
-        "elapsed_seconds": elapsed,
-        "headers": {
-            "content-type": r.headers.get("content-type"),
-            "retry-after": r.headers.get("retry-after"),
-            "ratelimit-limit": r.headers.get("ratelimit-limit"),
-            "ratelimit-remaining": r.headers.get("ratelimit-remaining"),
-            "ratelimit-reset": r.headers.get("ratelimit-reset"),
-        },
+        "url": resp.url,
+        "status_code": resp.status_code,
+        "elapsed_seconds": resp.elapsed_seconds,
+        "headers": resp.headers,
         "body": body,
     }
 
     if debug:
         print(f"GET {url}")
-        print(f"  -> {r.status_code}, {len(r.text)} bytes, {elapsed:.2f}s")
+        print(f"  -> {resp.status_code}, {resp.elapsed_seconds:.2f}s")
 
     return out
 
@@ -354,6 +329,7 @@ def extract_community_takeover_features(resp: Dict[str, Any], token: str) -> Dic
 
 
 def main() -> int:
+    configure_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument("--token", default=DEFAULT_TOKEN)
     parser.add_argument("--chain", default=CHAIN)
@@ -399,7 +375,7 @@ def main() -> int:
     features = {
         "token": token,
         "chain": chain,
-        "generated_at": now_utc().isoformat(),
+        "generated_at": utc_now().isoformat(),
         "endpoint_status": {
             name: {
                 "status_code": resp.get("status_code"),
