@@ -5,7 +5,9 @@ Solana token risk/security report — production data component.
 Risk score convention: 0 = lowest risk, 100 = highest risk.
 
 Examples:
-    # Human-readable display, like the original prototype
+    # Standard pipeline output:
+    #   data/raw/analysis/<MINT>/security_report
+    #   data/raw/analysis/<MINT>/security_analysis
     python solana_risk_report.py --mint <MINT>
 
     # Machine-friendly outputs for pipelines
@@ -24,6 +26,7 @@ import argparse
 import csv
 import hashlib
 import json
+from io import StringIO
 import logging
 import math
 import os
@@ -44,6 +47,10 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = "1.0.0"
 MODEL_VERSION = "heuristic_v1"
 CHAIN = "solana"
+
+DEFAULT_ANALYSIS_ROOT = Path("data/raw/analytics")
+SECURITY_REPORT_FILENAME = "security_report"
+SECURITY_ANALYSIS_FILENAME = "security_analytics"
 
 RUGCHECK_BASE = "https://api.rugcheck.xyz/v1"
 DEXSCREENER_BASE = "https://api.dexscreener.com"
@@ -1551,74 +1558,137 @@ def _write_parquet_row(path: Path, row: FeatureRow) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_human(report: StandardRiskReport) -> None:
-    """Print a human-readable summary."""
-    print("\n=== Solana Token Risk Report ===")
+def render_human_report(report: StandardRiskReport) -> str:
+    """Render the short human-readable security report."""
+    buf = StringIO()
+
+    print("\n=== Solana Token Risk Report ===", file=buf)
 
     symbol = report.token.get("symbol")
     name = report.token.get("name")
     label = f"{symbol} ({name})" if symbol and name else symbol or name
 
-    print(f"Token: {report.token.get('mint')}")
+    print(f"Token: {report.token.get('mint')}", file=buf)
     if label:
-        print(f"Name: {label}")
+        print(f"Name: {label}", file=buf)
 
     overall = report.overall
     print(
         f"Overall risk: {overall.get('risk_score')} / 100 "
-        f"({overall.get('risk_level')})"
+        f"({overall.get('risk_level')})",
+        file=buf,
     )
-    print(f"Confidence: {overall.get('confidence_score')}%")
-    print(f"Coverage ratio: {overall.get('coverage_ratio')}")
+    print(f"Confidence: {overall.get('confidence_score')}%", file=buf)
+    print(f"Coverage ratio: {overall.get('coverage_ratio')}", file=buf)
 
-    print("\nSource status:")
+    print("\nSource status:", file=buf)
     for src, status in report.source_status.items():
         if status.get("success"):
             print(
                 f"  - {src}: ok "
-                f"(latency_ms={status.get('latency_ms')}, http_status={status.get('http_status')})"
+                f"(latency_ms={status.get('latency_ms')}, http_status={status.get('http_status')})",
+                file=buf,
             )
         elif status.get("attempted"):
             print(
                 f"  - {src}: failed "
-                f"({status.get('error_type')}: {status.get('error_message')})"
+                f"({status.get('error_type')}: {status.get('error_message')})",
+                file=buf,
             )
         else:
-            print(f"  - {src}: skipped ({status.get('error_message')})")
+            print(f"  - {src}: skipped ({status.get('error_message')})", file=buf)
 
-    print("\nSub-category scores:")
+    print("\nSub-category scores:", file=buf)
     for name, cat in report.categories.items():
-        print(f"\n  {name}: {cat.get('score')} / 100 ({cat.get('level')})")
+        print(f"\n  {name}: {cat.get('score')} / 100 ({cat.get('level')})", file=buf)
         metrics = cat.get("metrics") or {}
         for metric_name, value in metrics.items():
-            print(f"    - {metric_name}: {value}")
+            print(f"    - {metric_name}: {value}", file=buf)
 
     if report.warnings:
-        print("\nTop warnings:")
+        print("\nTop warnings:", file=buf)
         for w in report.warnings[:12]:
             print(
                 f"  - [{w.get('severity')}] {w.get('code')}: "
-                f"{w.get('message')} (value={w.get('value')})"
+                f"{w.get('message')} (value={w.get('value')})",
+                file=buf,
             )
 
     liq = report.categories.get("liquidity_health", {}).get("metrics", {})
     trading = report.categories.get("trading_behavior", {}).get("metrics", {})
 
-    print("\nMarket snapshot:")
-    print(f"  Pair count: {liq.get('pair_count')}")
-    print(f"  Total liquidity: {liq.get('total_liquidity_usd')}")
-    print(f"  Top pair liquidity: {liq.get('top_pair_liquidity_usd')}")
-    print(f"  Newest pair age hours: {liq.get('newest_pair_age_hours')}")
-    print(f"  24h buys/sells: {trading.get('h24_buys')}/{trading.get('h24_sells')}")
-    print(f"  24h volume: {trading.get('h24_volume_usd')}")
-    print(f"  24h price change: {trading.get('h24_price_change_pct')}%")
+    print("\nMarket snapshot:", file=buf)
+    print(f"  Pair count: {liq.get('pair_count')}", file=buf)
+    print(f"  Total liquidity: {liq.get('total_liquidity_usd')}", file=buf)
+    print(f"  Top pair liquidity: {liq.get('top_pair_liquidity_usd')}", file=buf)
+    print(f"  Newest pair age hours: {liq.get('newest_pair_age_hours')}", file=buf)
+    print(f"  24h buys/sells: {trading.get('h24_buys')}/{trading.get('h24_sells')}", file=buf)
+    print(f"  24h volume: {trading.get('h24_volume_usd')}", file=buf)
+    print(f"  24h price change: {trading.get('h24_price_change_pct')}%", file=buf)
 
-    print("\nSchema:", report.schema_version)
+    print("\nSchema:", report.schema_version, file=buf)
     print(
         "\nDisclaimer: This is a heuristic risk screen, not financial advice "
         "and not a guarantee. Always inspect raw API reports, liquidity lockers, "
-        "deployer wallets, and recent transactions."
+        "deployer wallets, and recent transactions.",
+        file=buf,
     )
+
+    return buf.getvalue()
+
+
+def print_human(report: StandardRiskReport) -> None:
+    """Print a human-readable summary."""
+    print(render_human_report(report), end="")
+
+
+def write_standard_security_outputs(
+    report: StandardRiskReport,
+    analysis_root: Union[str, Path] = DEFAULT_ANALYSIS_ROOT,
+) -> Dict[str, Path]:
+    """Write standardized per-mint security outputs.
+
+    Layout:
+        data/raw/analysis/<mint>/security_report
+        data/raw/analysis/<mint>/security_analysis
+
+    security_report is human-readable text.
+    security_analysis is a compact flat JSON feature row for downstream analysis.
+    """
+    mint = str(report.token.get("mint") or "").strip()
+    if not mint:
+        raise ValueError("Cannot write standard outputs without token.mint")
+
+    out_dir = Path(analysis_root) / mint
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    report_path = out_dir / SECURITY_REPORT_FILENAME
+    analysis_path = out_dir / SECURITY_ANALYSIS_FILENAME
+
+    report_path.write_text(render_human_report(report), encoding="utf-8")
+
+    analysis_row = flatten_report(report)
+    analysis_path.write_text(
+        json.dumps(
+            analysis_row,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=json_default,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    return {
+        "directory": out_dir,
+        "security_report": report_path,
+        "security_analysis": analysis_path,
+    }
+
+
+def _print_standard_save_paths(paths: Mapping[str, Path], *, stream: Any = sys.stdout) -> None:
+    print(f"\nSaved security_report: {paths['security_report']}", file=stream)
+    print(f"Saved security_analysis: {paths['security_analysis']}", file=stream)
 
 
 # ---------------------------------------------------------------------------
@@ -1684,6 +1754,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Machine-readable output format. Default is json when --out or --machine is used.",
     )
     parser.add_argument("--out", help="Output file path for machine-readable export")
+    parser.add_argument(
+        "--analysis-root",
+        default=str(DEFAULT_ANALYSIS_ROOT),
+        help="Base directory for standard per-mint outputs. Default: data/raw/analysis",
+    )
+    parser.add_argument(
+        "--no-standard-save",
+        action="store_true",
+        help="Do not write data/raw/analysis/<mint>/security_report and security_analysis.",
+    )
     parser.add_argument("--append", action="store_true", help="Append to JSONL/CSV output")
     parser.add_argument("--no-raw", action="store_true", help="Exclude raw vendor payloads")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
@@ -1736,6 +1816,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         validate_report_schema(report)
         logger.info("Schema validation passed")
 
+    standard_paths: Optional[Dict[str, Path]] = None
+    if not args.no_standard_save:
+        standard_paths = write_standard_security_outputs(report, args.analysis_root)
+        logger.info(
+            "Wrote standard security outputs to %s",
+            standard_paths["directory"],
+        )
+
     if args.out:
         try:
             write_report(
@@ -1752,6 +1840,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logger.info("Wrote %s report to %s", output_format, args.out)
         print(f"Wrote {output_format.upper()} report to {args.out}")
 
+        if standard_paths is not None:
+            _print_standard_save_paths(standard_paths)
+
         if args.human:
             print_human(report)
 
@@ -1759,6 +1850,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.human or not explicit_machine_request:
         print_human(report)
+        if standard_paths is not None:
+            _print_standard_save_paths(standard_paths)
         return 0
 
     return _print_machine_stdout(report, output_format, pretty=args.pretty)

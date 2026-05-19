@@ -10,15 +10,27 @@ Create .env next to this script:
 Run:
   pip install websockets
   python test_pumpportal_ws_env.py
+
+Default:
+  Shows aggregate metrics only.
+
+Other modes:
+  python test_pumpportal_ws_env.py --display all
+  python test_pumpportal_ws_env.py --display bar
+
+Run indefinitely:
+  python test_pumpportal_ws_env.py --duration 0 --display bar
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
-import sqlite3
+import shutil
+import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,231 +39,103 @@ import websockets
 
 
 ENV_FILE = ".env"
-DURATION_SECONDS = 120
-
-RAW_SUBDIR = Path("data") / "raw" / "pump_portal"
-SQLITE_PATH = Path("data") / "pipeline_state.sqlite3"
+DEFAULT_DURATION_SECONDS = 120
+RAW_SUBDIR = Path("data") / "raw" / "migrations"
 
 
-@dataclass(frozen=True)
-class EventMeta:
-    received_at_ms: int
-    event_date: str
-    event_type: str
-    mint: str | None
-    signature: str | None
+@dataclass
+class StreamMetrics:
+    messages_total: int = 0
 
+    new_token_events: int = 0
+    migration_events: int = 0
 
-class PumpPortalStore:
-    def __init__(self, db_path: Path) -> None:
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+    unique_new_token_mints: set[str] = field(default_factory=set)
+    unique_migration_mints: set[str] = field(default_factory=set)
 
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row
-        self._init_db()
+    subscription_ack_messages: int = 0
+    control_messages: int = 0
+    permission_errors: int = 0
+    errors: int = 0
+    unknown_messages: int = 0
+    decode_errors: int = 0
 
-    def _init_db(self) -> None:
-        self.conn.execute("PRAGMA journal_mode=WAL;")
-        self.conn.execute("PRAGMA synchronous=NORMAL;")
-        self.conn.execute("PRAGMA foreign_keys=ON;")
+    started_at: float = field(default_factory=time.time)
 
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS pumpportal_event_index (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                received_at_ms INTEGER NOT NULL,
-                event_date TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                mint TEXT,
-                signature TEXT,
-                raw_file TEXT NOT NULL,
-                raw_line INTEGER NOT NULL,
-                UNIQUE(raw_file, raw_line)
-            );
+    def update(self, raw_row: dict[str, Any]) -> None:
+        self.messages_total += 1
 
-            CREATE INDEX IF NOT EXISTS idx_pumpportal_event_type_date
-            ON pumpportal_event_index(event_type, event_date);
+        event_type = str(raw_row.get("event_type") or "unknown")
+        mint = raw_row.get("mint")
 
-            CREATE INDEX IF NOT EXISTS idx_pumpportal_event_mint
-            ON pumpportal_event_index(mint);
-
-            CREATE TABLE IF NOT EXISTS pumpportal_mint_status (
-                mint TEXT PRIMARY KEY,
-                seen_new_token INTEGER NOT NULL DEFAULT 0,
-                migrated INTEGER NOT NULL DEFAULT 0,
-                first_seen_at_ms INTEGER,
-                migrated_at_ms INTEGER,
-                last_event_at_ms INTEGER NOT NULL,
-                new_token_event_id INTEGER,
-                migration_event_id INTEGER,
-                FOREIGN KEY(new_token_event_id)
-                    REFERENCES pumpportal_event_index(id),
-                FOREIGN KEY(migration_event_id)
-                    REFERENCES pumpportal_event_index(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_pumpportal_mint_status_migrated
-            ON pumpportal_mint_status(migrated);
-
-            CREATE INDEX IF NOT EXISTS idx_pumpportal_mint_status_first_seen
-            ON pumpportal_mint_status(first_seen_at_ms);
-            """
-        )
-        self.conn.commit()
-
-    def insert_event_index(
-        self,
-        meta: EventMeta,
-        raw_file: Path,
-        raw_line: int,
-    ) -> int:
-        with self.conn:
-            cursor = self.conn.execute(
-                """
-                INSERT INTO pumpportal_event_index (
-                    received_at_ms,
-                    event_date,
-                    event_type,
-                    mint,
-                    signature,
-                    raw_file,
-                    raw_line
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    meta.received_at_ms,
-                    meta.event_date,
-                    meta.event_type,
-                    meta.mint,
-                    meta.signature,
-                    str(raw_file),
-                    raw_line,
-                ),
-            )
-
-        return int(cursor.lastrowid)
-
-    def update_mint_status(self, meta: EventMeta, event_id: int) -> None:
-        if meta.mint is None:
+        if event_type == "new_token":
+            self.new_token_events += 1
+            if isinstance(mint, str) and mint:
+                self.unique_new_token_mints.add(mint)
             return
 
-        if meta.event_type == "new_token":
-            self._mark_new_token(meta, event_id)
+        if event_type == "migration":
+            self.migration_events += 1
+            if isinstance(mint, str) and mint:
+                self.unique_migration_mints.add(mint)
             return
 
-        if meta.event_type == "migration":
-            self._mark_migration(meta, event_id)
+        if event_type == "subscription_ack":
+            self.subscription_ack_messages += 1
             return
 
-    def _mark_new_token(self, meta: EventMeta, event_id: int) -> None:
-        assert meta.mint is not None
+        if event_type == "control_message":
+            self.control_messages += 1
+            return
 
-        with self.conn:
-            self.conn.execute(
-                """
-                INSERT INTO pumpportal_mint_status (
-                    mint,
-                    seen_new_token,
-                    migrated,
-                    first_seen_at_ms,
-                    migrated_at_ms,
-                    last_event_at_ms,
-                    new_token_event_id,
-                    migration_event_id
-                )
-                VALUES (?, 1, 0, ?, NULL, ?, ?, NULL)
-                ON CONFLICT(mint) DO UPDATE SET
-                    seen_new_token = 1,
-                    first_seen_at_ms = COALESCE(
-                        pumpportal_mint_status.first_seen_at_ms,
-                        excluded.first_seen_at_ms
-                    ),
-                    last_event_at_ms = excluded.last_event_at_ms,
-                    new_token_event_id = COALESCE(
-                        pumpportal_mint_status.new_token_event_id,
-                        excluded.new_token_event_id
-                    )
-                """,
-                (
-                    meta.mint,
-                    meta.received_at_ms,
-                    meta.received_at_ms,
-                    event_id,
-                ),
-            )
+        if event_type == "permission_error":
+            self.permission_errors += 1
+            return
 
-    def _mark_migration(self, meta: EventMeta, event_id: int) -> None:
-        assert meta.mint is not None
+        if event_type == "error":
+            self.errors += 1
+            return
 
-        with self.conn:
-            self.conn.execute(
-                """
-                INSERT INTO pumpportal_mint_status (
-                    mint,
-                    seen_new_token,
-                    migrated,
-                    first_seen_at_ms,
-                    migrated_at_ms,
-                    last_event_at_ms,
-                    new_token_event_id,
-                    migration_event_id
-                )
-                VALUES (?, 0, 1, NULL, ?, ?, NULL, ?)
-                ON CONFLICT(mint) DO UPDATE SET
-                    migrated = 1,
-                    migrated_at_ms = COALESCE(
-                        pumpportal_mint_status.migrated_at_ms,
-                        excluded.migrated_at_ms
-                    ),
-                    last_event_at_ms = excluded.last_event_at_ms,
-                    migration_event_id = COALESCE(
-                        pumpportal_mint_status.migration_event_id,
-                        excluded.migration_event_id
-                    )
-                """,
-                (
-                    meta.mint,
-                    meta.received_at_ms,
-                    meta.received_at_ms,
-                    event_id,
-                ),
-            )
+        if event_type == "decode_error":
+            self.decode_errors += 1
+            return
 
-    def get_summary(self) -> dict[str, int | float]:
-        row = self.conn.execute(
-            """
-            SELECT
-                COUNT(*) AS total_unique_mints,
-                SUM(CASE WHEN seen_new_token = 1 THEN 1 ELSE 0 END)
-                    AS seen_new_token_mints,
-                SUM(CASE WHEN migrated = 1 THEN 1 ELSE 0 END)
-                    AS migrated_mints,
-                SUM(
-                    CASE
-                        WHEN seen_new_token = 1 AND migrated = 1 THEN 1
-                        ELSE 0
-                    END
-                ) AS observed_then_migrated_mints
-            FROM pumpportal_mint_status
-            """
-        ).fetchone()
+        if event_type == "unknown":
+            self.unknown_messages += 1
+            return
 
-        seen_new = int(row["seen_new_token_mints"] or 0)
-        migrated_after_seen = int(row["observed_then_migrated_mints"] or 0)
+    @property
+    def unique_new_token_count(self) -> int:
+        return len(self.unique_new_token_mints)
 
-        migration_rate = migrated_after_seen / seen_new if seen_new else 0.0
+    @property
+    def unique_migration_count(self) -> int:
+        return len(self.unique_migration_mints)
+
+    @property
+    def observed_migration_rate(self) -> float:
+        if self.unique_new_token_count == 0:
+            return 0.0
+        return self.unique_migration_count / self.unique_new_token_count
+
+    def as_dict(self) -> dict[str, int | float]:
+        elapsed = max(time.time() - self.started_at, 0.001)
 
         return {
-            "total_unique_mints_in_state": int(row["total_unique_mints"] or 0),
-            "seen_new_token_mints": seen_new,
-            "migrated_mints": int(row["migrated_mints"] or 0),
-            "observed_then_migrated_mints": migrated_after_seen,
-            "observed_migration_rate_pct": migration_rate * 100.0,
+            "messages_total": self.messages_total,
+            "new_token_events": self.new_token_events,
+            "migration_events": self.migration_events,
+            "unique_new_token_mints": self.unique_new_token_count,
+            "unique_migration_mints": self.unique_migration_count,
+            "observed_migration_rate_pct": self.observed_migration_rate * 100.0,
+            "subscription_ack_messages": self.subscription_ack_messages,
+            "control_messages": self.control_messages,
+            "permission_errors": self.permission_errors,
+            "errors": self.errors,
+            "unknown_messages": self.unknown_messages,
+            "decode_errors": self.decode_errors,
+            "messages_per_second": self.messages_total / elapsed,
         }
-
-    def close(self) -> None:
-        self.conn.close()
 
 
 def load_local_env(filename: str = ENV_FILE) -> dict[str, str]:
@@ -277,28 +161,21 @@ def now_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
-def utc_date_from_ms(timestamp_ms: int) -> str:
-    return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).date().isoformat()
+def utc_iso_from_ms(timestamp_ms: int) -> str:
+    return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()
 
 
 def build_raw_file_path(repo_root: Path) -> Path:
     raw_dir = repo_root / RAW_SUBDIR
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return raw_dir / f"pumpportal_stream_{run_id}.jsonl"
+    current_day = datetime.now(timezone.utc).date().isoformat()
+    return raw_dir / f"{current_day}.jsonl"
 
 
 def extract_mint(data: dict[str, Any]) -> str | None:
-    candidates = (
-        data.get("mint"),
-        data.get("tokenMint"),
-        data.get("token_mint"),
-        data.get("mintAddress"),
-        data.get("ca"),
-    )
-
-    for value in candidates:
+    for key in ("mint", "tokenMint", "token_mint", "mintAddress", "ca"):
+        value = data.get(key)
         if isinstance(value, str) and value:
             return value
 
@@ -306,14 +183,8 @@ def extract_mint(data: dict[str, Any]) -> str | None:
 
 
 def extract_signature(data: dict[str, Any]) -> str | None:
-    candidates = (
-        data.get("signature"),
-        data.get("txSignature"),
-        data.get("transactionSignature"),
-        data.get("sig"),
-    )
-
-    for value in candidates:
+    for key in ("signature", "txSignature", "transactionSignature", "sig"):
+        value = data.get(key)
         if isinstance(value, str) and value:
             return value
 
@@ -321,16 +192,20 @@ def extract_signature(data: dict[str, Any]) -> str | None:
 
 
 def detect_event_type(data: dict[str, Any]) -> str:
-    if "errors" in data or "error" in data:
-        return "error"
+    if data.get("_decode_error") is True:
+        return "decode_error"
 
-    message = str(data.get("message", "")).strip().lower()
+    error_text = str(data.get("errors") or data.get("error") or "").strip().lower()
+    message = str(data.get("message") or "").strip().lower()
+
+    if error_text:
+        if "minimum balance" in error_text:
+            return "permission_error"
+        return "error"
 
     if message:
         if "subscribed" in message:
             return "subscription_ack"
-        if "minimum balance" in message:
-            return "permission_error"
         return "control_message"
 
     raw_type = (
@@ -357,32 +232,140 @@ def detect_event_type(data: dict[str, Any]) -> str:
 
     return "unknown"
 
-def build_event_meta(data: dict[str, Any], received_at_ms: int) -> EventMeta:
-    return EventMeta(
-        received_at_ms=received_at_ms,
-        event_date=utc_date_from_ms(received_at_ms),
-        event_type=detect_event_type(data),
-        mint=extract_mint(data),
-        signature=extract_signature(data),
-    )
+
+def normalize_message(msg: str) -> dict[str, Any]:
+    try:
+        data = json.loads(msg)
+    except json.JSONDecodeError:
+        return {
+            "_decode_error": True,
+            "raw_message": msg,
+        }
+
+    if not isinstance(data, dict):
+        return {
+            "_non_object_message": True,
+            "raw_message": data,
+        }
+
+    return data
 
 
-def build_raw_row(meta: EventMeta, data: dict[str, Any]) -> dict[str, Any]:
+def build_raw_row(data: dict[str, Any], received_at_ms: int) -> dict[str, Any]:
     return {
-        "received_at_ms": meta.received_at_ms,
-        "received_at_iso_utc": datetime.fromtimestamp(
-            meta.received_at_ms / 1000,
-            tz=timezone.utc,
-        ).isoformat(),
+        "received_at_ms": received_at_ms,
+        "received_at_iso_utc": utc_iso_from_ms(received_at_ms),
         "source": "pumpportal",
-        "event_type": meta.event_type,
-        "mint": meta.mint,
-        "signature": meta.signature,
+        "event_type": detect_event_type(data),
+        "mint": extract_mint(data),
+        "signature": extract_signature(data),
         "data": data,
     }
 
 
+def print_metrics(metrics: StreamMetrics, raw_path: Path) -> None:
+    snapshot = metrics.as_dict()
+
+    print()
+    print("=" * 72)
+    print("PumpPortal stream metrics")
+    print("=" * 72)
+    print(f"raw_file:                    {raw_path}")
+    print(f"messages_total:              {snapshot['messages_total']}")
+    print(f"new_token_events:            {snapshot['new_token_events']}")
+    print(f"migration_events:            {snapshot['migration_events']}")
+    print(f"unique_new_token_mints:      {snapshot['unique_new_token_mints']}")
+    print(f"unique_migration_mints:      {snapshot['unique_migration_mints']}")
+    print(f"observed_migration_rate_pct: {snapshot['observed_migration_rate_pct']:.4f}")
+    print(f"subscription_ack_messages:   {snapshot['subscription_ack_messages']}")
+    print(f"control_messages:            {snapshot['control_messages']}")
+    print(f"permission_errors:           {snapshot['permission_errors']}")
+    print(f"errors:                      {snapshot['errors']}")
+    print(f"unknown_messages:            {snapshot['unknown_messages']}")
+    print(f"decode_errors:               {snapshot['decode_errors']}")
+    print(f"messages_per_second:         {snapshot['messages_per_second']:.4f}")
+
+
+def format_status_bar(
+    metrics: StreamMetrics,
+    elapsed: float,
+    duration_seconds: int,
+) -> str:
+    columns = shutil.get_terminal_size((100, 20)).columns
+
+    if duration_seconds > 0:
+        progress = min(elapsed / duration_seconds, 1.0)
+        bar_width = 24
+        filled = int(progress * bar_width)
+        bar = "[" + "#" * filled + "-" * (bar_width - filled) + "]"
+        time_part = f"{elapsed:6.1f}s/{duration_seconds}s"
+    else:
+        spinner = "|/-\\"[metrics.messages_total % 4]
+        bar = f"[{spinner}]"
+        time_part = f"{elapsed:6.1f}s"
+
+    text = (
+        f"{bar} {time_part} "
+        f"msgs={metrics.messages_total} "
+        f"mints={metrics.new_token_events} "
+        f"uniq_mints={metrics.unique_new_token_count} "
+        f"migrations={metrics.migration_events} "
+        f"uniq_migr={metrics.unique_migration_count} "
+        f"perm_err={metrics.permission_errors} "
+        f"unknown={metrics.unknown_messages}"
+    )
+
+    if len(text) >= columns:
+        text = text[: columns - 1]
+
+    return text
+
+
+def print_bar(metrics: StreamMetrics, duration_seconds: int) -> None:
+    elapsed = time.time() - metrics.started_at
+    line = format_status_bar(
+        metrics=metrics,
+        elapsed=elapsed,
+        duration_seconds=duration_seconds,
+    )
+
+    sys.stdout.write("\r\x1b[2K" + line)
+    sys.stdout.flush()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=DEFAULT_DURATION_SECONDS,
+        help="How long to stream in seconds. Use 0 to run indefinitely.",
+    )
+
+    parser.add_argument(
+        "--display",
+        choices=("metrics", "all", "bar"),
+        default="metrics",
+        help=(
+            "metrics: aggregate metrics only, "
+            "all: print every raw event, "
+            "bar: live updating one-line metric bar"
+        ),
+    )
+
+    parser.add_argument(
+        "--metrics-every",
+        type=float,
+        default=5.0,
+        help="How often to print aggregate metrics in metrics mode.",
+    )
+
+    return parser.parse_args()
+
+
 async def main() -> None:
+    args = parse_args()
     repo_root = Path(__file__).resolve().parent
 
     env = load_local_env()
@@ -393,78 +376,63 @@ async def main() -> None:
         url += f"?api-key={api_key}"
 
     raw_path = build_raw_file_path(repo_root)
-    db_path = repo_root / SQLITE_PATH
-
-    store = PumpPortalStore(db_path)
+    metrics = StreamMetrics()
 
     print("listening to PumpPortal WebSocket")
-    print(f"raw JSONL: {raw_path}")
-    print(f"sqlite:    {db_path}")
+    print(f"writing raw JSONL to: {raw_path}")
+    print(f"display mode: {args.display}")
 
-    try:
-        async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
-            await ws.send(json.dumps({"method": "subscribeMigration"}))
-            await ws.send(json.dumps({"method": "subscribeNewToken"}))
+    async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+        await ws.send(json.dumps({"method": "subscribeMigration"}))
+        await ws.send(json.dumps({"method": "subscribeNewToken"}))
 
-            start = time.time()
-            raw_line = 0
+        start = time.time()
+        last_metrics_print = start
 
-            with raw_path.open("a", encoding="utf-8") as out:
-                while time.time() - start < DURATION_SECONDS:
-                    try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=30)
-                    except asyncio.TimeoutError:
+        with raw_path.open("a", encoding="utf-8") as out:
+            while args.duration <= 0 or time.time() - start < args.duration:
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=30)
+                except asyncio.TimeoutError:
+                    if args.display == "bar":
+                        print_bar(metrics, args.duration)
+                    else:
                         print("no message in 30s; still connected")
-                        continue
+                    continue
 
-                    received_at_ms = now_ms()
+                received_at_ms = now_ms()
+                data = normalize_message(msg)
+                raw_row = build_raw_row(data=data, received_at_ms=received_at_ms)
 
-                    try:
-                        data = json.loads(msg)
-                    except json.JSONDecodeError:
-                        data = {
-                            "_decode_error": True,
-                            "raw_message": msg,
-                        }
-
-                    if not isinstance(data, dict):
-                        data = {
-                            "_non_object_message": True,
-                            "raw_message": data,
-                        }
-
-                    meta = build_event_meta(data, received_at_ms)
-                    raw_row = build_raw_row(meta, data)
-
-                    raw_line += 1
-                    out.write(json.dumps(raw_row, ensure_ascii=False, separators=(",", ":")))
-                    out.write("\n")
-                    out.flush()
-
-                    event_id = store.insert_event_index(
-                        meta=meta,
-                        raw_file=raw_path,
-                        raw_line=raw_line,
+                out.write(
+                    json.dumps(
+                        raw_row,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
                     )
-                    store.update_mint_status(meta=meta, event_id=event_id)
+                )
+                out.write("\n")
+                out.flush()
 
-                    print(
-                        json.dumps(
-                            {
-                                "event_type": meta.event_type,
-                                "mint": meta.mint,
-                                "signature": meta.signature,
-                            },
-                            ensure_ascii=False,
-                        )
-                    )
+                metrics.update(raw_row)
 
-    finally:
-        summary = store.get_summary()
-        store.close()
+                if args.display == "all":
+                    print(json.dumps(raw_row, ensure_ascii=False))
 
-    print("summary:")
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+                elif args.display == "bar":
+                    print_bar(metrics, args.duration)
+
+                else:
+                    now = time.time()
+                    if now - last_metrics_print >= args.metrics_every:
+                        print_metrics(metrics, raw_path)
+                        last_metrics_print = now
+
+    if args.display == "bar":
+        print()
+
+    print_metrics(metrics, raw_path)
+    print("done")
 
 
 if __name__ == "__main__":

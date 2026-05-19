@@ -357,7 +357,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--token", default=DEFAULT_TOKEN)
     parser.add_argument("--chain", default=CHAIN)
-    parser.add_argument("--out", default="./dexscreener_enrichment_test")
+    parser.add_argument("--out", default="./data/raw/analytics/dexscreener")
     parser.add_argument("--sleep", type=float, default=1.1, help="Safe delay; 60 rpm endpoints need >=1.0 sec.")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
