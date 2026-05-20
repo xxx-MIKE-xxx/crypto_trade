@@ -14,8 +14,8 @@ What it does:
   - slow getTransaction fetcher with retries
   - rotates across multiple RPC HTTP URLs if provided
   - respects HTTP 429 Retry-After when present
-  - accountSubscribe for watched addresses
-  - periodic getMultipleAccounts snapshots
+  - optional accountSubscribe for watched addresses
+  - optional periodic getMultipleAccounts snapshots
   - discovers token accounts from fetched tx pre/post token balances
   - writes a final viability_report.json
   - prints progressive CLI status while data is being captured/fetched
@@ -727,8 +727,10 @@ class Capture:
         poll_seconds: float,
         backfill_limit: int,
         snapshot_seconds: float,
+        poll_seconds_connected: float,
         max_queue_size: int,
         display_seconds: float,
+        enable_account_notifications: bool,
         debug: bool,
     ):
         self.mint = mint
@@ -743,13 +745,16 @@ class Capture:
         self.tx_retry_seconds = tx_retry_seconds
         self.max_tx_attempts = max_tx_attempts
         self.poll_seconds = poll_seconds
+        self.poll_seconds_connected = poll_seconds_connected
         self.backfill_limit = backfill_limit
         self.snapshot_seconds = snapshot_seconds
         self.max_queue_size = max_queue_size
         self.display_seconds = display_seconds
+        self.enable_account_notifications = enable_account_notifications
 
         self.stop_event = asyncio.Event()
         self.started_at = now_ts()
+        self.ws_healthy = False
 
         self.paths = {
             "manifest": out_dir / "manifest.json",
@@ -834,10 +839,12 @@ class Capture:
             "ws_url": sanitize_url_for_display(self.ws_url),
             "duration_seconds": self.duration_seconds,
             "poll_seconds": self.poll_seconds,
+            "poll_seconds_connected": self.poll_seconds_connected,
             "backfill_limit": self.backfill_limit,
             "snapshot_seconds": self.snapshot_seconds,
             "tx_retry_seconds": self.tx_retry_seconds,
             "max_tx_attempts": self.max_tx_attempts,
+            "enable_account_notifications": self.enable_account_notifications,
             "outputs": {k: str(v.name) for k, v in self.paths.items()},
         })
 
@@ -917,6 +924,7 @@ class Capture:
         while not self.stop_event.is_set():
             try:
                 async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=20) as ws:
+                    self.ws_healthy = True
                     print(f"[ws] connected {sanitize_url_for_display(self.ws_url)}", flush=True)
                     pending_ids: Dict[int, Tuple[str, str]] = {}
                     req_id = 1
@@ -934,21 +942,22 @@ class Capture:
                         pending_ids[req_id] = ("logs", addr)
                         req_id += 1
 
-                    for addr in self.watch_addresses:
-                        await ws.send(json.dumps({
-                            "jsonrpc": "2.0",
-                            "id": req_id,
-                            "method": "accountSubscribe",
-                            "params": [
-                                addr,
-                                {
-                                    "encoding": "base64",
-                                    "commitment": "confirmed",
-                                },
-                            ],
-                        }))
-                        pending_ids[req_id] = ("account", addr)
-                        req_id += 1
+                    if self.enable_account_notifications:
+                        for addr in self.watch_addresses:
+                            await ws.send(json.dumps({
+                                "jsonrpc": "2.0",
+                                "id": req_id,
+                                "method": "accountSubscribe",
+                                "params": [
+                                    addr,
+                                    {
+                                        "encoding": "base64",
+                                        "commitment": "confirmed",
+                                    },
+                                ],
+                            }))
+                            pending_ids[req_id] = ("account", addr)
+                            req_id += 1
 
                     sub_id_to_target: Dict[int, Tuple[str, str]] = {}
 
@@ -989,8 +998,11 @@ class Capture:
                 raise
 
             except Exception as e:
+                self.ws_healthy = False
                 print(f"[ws] error {e!r}; reconnect in 5s", flush=True)
                 await asyncio.sleep(5)
+            finally:
+                self.ws_healthy = False
 
     async def poller(self) -> None:
         while not self.stop_event.is_set():
@@ -1019,7 +1031,12 @@ class Capture:
                     if sig:
                         await self.add_signature(sig, addr, "poll_getSignaturesForAddress")
 
-            await asyncio.sleep(self.poll_seconds)
+            sleep_for = (
+                self.poll_seconds_connected
+                if self.ws_healthy and self.poll_seconds_connected > 0
+                else self.poll_seconds
+            )
+            await asyncio.sleep(sleep_for)
 
     async def fetcher(self) -> None:
         while not self.stop_event.is_set():
@@ -1111,6 +1128,9 @@ class Capture:
                 })
 
     async def snapshotter(self) -> None:
+        if self.snapshot_seconds <= 0:
+            return
+
         while not self.stop_event.is_set():
             accounts = sorted(self.snapshot_accounts)
 
@@ -1190,10 +1210,12 @@ class Capture:
             asyncio.create_task(self.websocket_listener()),
             asyncio.create_task(self.poller()),
             asyncio.create_task(self.fetcher()),
-            asyncio.create_task(self.snapshotter()),
             asyncio.create_task(self.reporter()),
             asyncio.create_task(self.progress_reporter()),
         ]
+
+        if self.snapshot_seconds > 0:
+            tasks.append(asyncio.create_task(self.snapshotter()))
 
         async def stop_after() -> None:
             await asyncio.sleep(self.duration_seconds)
@@ -1253,11 +1275,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tx-retry-seconds", type=float, default=20.0)
     parser.add_argument("--max-tx-attempts", type=int, default=100)
     parser.add_argument("--poll-seconds", type=float, default=20.0)
+    parser.add_argument("--poll-seconds-connected", type=float, default=60.0, help="Gap-fill polling interval while websocket is healthy.")
     parser.add_argument("--backfill-limit", type=int, default=5)
-    parser.add_argument("--snapshot-seconds", type=float, default=60.0)
+    parser.add_argument("--snapshot-seconds", type=float, default=0.0, help="Periodic getMultipleAccounts interval. Use 0 to disable.")
     parser.add_argument("--max-queue-size", type=int, default=100000)
     parser.add_argument("--quote-mint", action="append", default=[WSOL_MINT, USDC_MINT])
     parser.add_argument("--display-seconds", type=float, default=10.0, help="CLI progress display interval. Use 0 to disable.")
+    parser.add_argument("--enable-account-notifications", action="store_true", help="Subscribe to account notifications over websocket. Disabled by default to save streaming credits.")
     parser.add_argument("--debug", action="store_true")
 
     return parser.parse_args(remaining)
@@ -1289,10 +1313,12 @@ async def async_main() -> int:
         tx_retry_seconds=args.tx_retry_seconds,
         max_tx_attempts=args.max_tx_attempts,
         poll_seconds=args.poll_seconds,
+        poll_seconds_connected=args.poll_seconds_connected,
         backfill_limit=args.backfill_limit,
         snapshot_seconds=args.snapshot_seconds,
         max_queue_size=args.max_queue_size,
         display_seconds=args.display_seconds,
+        enable_account_notifications=args.enable_account_notifications,
         debug=args.debug,
     )
 

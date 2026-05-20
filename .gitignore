@@ -1,0 +1,7 @@
+.env
+data/raw/analytics/*
+data/raw/migrations/*
+data/raw/onchain/*
+data/raw/orchestrator/*
+*.session
+*cache*
