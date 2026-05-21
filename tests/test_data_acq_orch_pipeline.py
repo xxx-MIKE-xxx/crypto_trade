@@ -1,4 +1,7 @@
 from pathlib import Path
+import asyncio
+import io
+import logging
 
 import data_acq_orch as orch
 
@@ -14,6 +17,13 @@ def test_orchestrator_defaults_follow_pipeline_layout():
     assert config.risk_analysis_root == Path("data/raw/analytics")
     assert config.dexscreener_out_root == Path("data/raw/analytics")
     assert config.website_output_root == Path("data/raw/analytics")
+    assert config.capture_network_sample_seconds == 60.0
+    assert config.capture_network_sample_fee_addresses is False
+    assert config.max_post_migration_tracked_coins == 6
+    assert config.post_migration_dex_tracking_hours == 24.0
+    assert config.post_migration_dex_requests_per_minute == 50.0
+    assert config.post_migration_dex_endpoint_profile == "market"
+    assert config.post_migration_dex_out_root == Path("data/raw/onchain")
 
 
 def test_dex_features_path_is_under_analytics_mint_dexscreener(tmp_path):
@@ -54,3 +64,427 @@ def test_extract_social_urls_from_dexscreener_features():
 
     assert orch.extract_social_url(features, {"telegram", "tg"}) == "https://t.me/examplecoin"
     assert orch.extract_social_url(features, {"twitter", "x"}) == "https://x.com/examplecoin"
+
+
+def test_capture_command_passes_network_sampling_knobs(tmp_path, monkeypatch):
+    commands = []
+
+    async def fake_run_subprocess(command, **kwargs):
+        commands.append(command)
+        return orch.SubprocessResult(returncode=0, elapsed_seconds=0.0, command=tuple(command))
+
+    monkeypatch.setattr(orch, "run_subprocess", fake_run_subprocess)
+    config = orch.OrchestratorConfig(
+        pumpportal_jsonl_path=tmp_path / "migrations.jsonl",
+        pumpportal_script_path=Path("pumpportal_ws.py"),
+        capture_script_path=Path("solana_coin_1h_capture.py"),
+        risk_report_script_path=Path("solana_risk_report.py"),
+        dexscreener_script_path=Path("dexscreener_api.py"),
+        website_grader_script_path=Path("website_grader_v2.py"),
+        telegram_info_script_path=Path("telegram_info.py"),
+        state_path=tmp_path / "state.json",
+        capture_network_sample_seconds=90.0,
+        capture_network_sample_fee_addresses=True,
+    )
+    orchestrator = orch.MemeCoinPipelineOrchestrator(
+        config=config,
+        logger=orch.setup_logging("ERROR"),
+    )
+
+    ctx = orch.CoinContext(mint="Mint111", pair_addresses=("Pair111",), migration_event={})
+    asyncio.run(orchestrator.run_capture(ctx))
+
+    command = commands[0]
+    assert "--network-sample-seconds" in command
+    assert command[command.index("--network-sample-seconds") + 1] == "90.0"
+    assert "--network-sample-fee-addresses" in command
+
+
+def test_capture_command_filters_non_address_pairs(tmp_path, monkeypatch):
+    commands = []
+
+    async def fake_run_subprocess(command, **kwargs):
+        commands.append(command)
+        return orch.SubprocessResult(returncode=0, elapsed_seconds=0.0, command=tuple(command))
+
+    monkeypatch.setattr(orch, "run_subprocess", fake_run_subprocess)
+    config = orch.OrchestratorConfig(
+        pumpportal_jsonl_path=tmp_path / "migrations.jsonl",
+        pumpportal_script_path=Path("pumpportal_ws.py"),
+        capture_script_path=Path("solana_coin_1h_capture.py"),
+        risk_report_script_path=Path("solana_risk_report.py"),
+        dexscreener_script_path=Path("dexscreener_api.py"),
+        website_grader_script_path=Path("website_grader_v2.py"),
+        telegram_info_script_path=Path("telegram_info.py"),
+        state_path=tmp_path / "state.json",
+    )
+    orchestrator = orch.MemeCoinPipelineOrchestrator(
+        config=config,
+        logger=orch.setup_logging("ERROR"),
+    )
+
+    ctx = orch.CoinContext(
+        mint="1tMyNUUnCL6aeFAWnQDCj5ok3CFTatgehBkodxVpump",
+        pair_addresses=("pump-amm", "So11111111111111111111111111111111111111112"),
+        migration_event={},
+    )
+    asyncio.run(orchestrator.run_capture(ctx))
+
+    command = commands[0]
+    assert "pump-amm" not in command
+    assert "--pair" in command
+    assert "So11111111111111111111111111111111111111112" in command
+
+
+class _FakeTty(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def _metrics_record(**extra: object) -> logging.LogRecord:
+    record = logging.LogRecord(
+        name="test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="metrics",
+        args=(),
+        exc_info=None,
+    )
+    record.event = "orchestrator_metrics"
+    record.rows_read = 1
+    record.currently_tracked_mints = 2
+    record.migrated_coins_detected = 3
+    record.eligible_migrations = 4
+    record.active_coin_pipelines = 1
+    record.post_migration_dex_tracked_coins = 0
+    record.completed_coin_analyses = 0
+    record.failed_coin_analyses = 0
+    record.current_stage = {}
+    for key, value in extra.items():
+        setattr(record, key, value)
+    return record
+
+
+def test_format_metrics_line_truncates():
+    state = orch.ConsoleDashboardState(
+        rows_read=999_999,
+        migrated_coins_detected=99,
+        eligible_migrations=88,
+        active_coin_pipelines=7,
+        max_concurrent_coins=5,
+        post_migration_dex_tracked_coins=6,
+        completed_coin_analyses=5,
+        failed_coin_analyses=4,
+        current_stage={"CuAgWRcsKuNBoXLvytiRc1BQ4yF19gcxkX8ufmHNpump": "solana_1h_capture"},
+    )
+    state.coins["CuAgWRcsKuNBoXLvytiRc1BQ4yF19gcxkX8ufmHNpump"] = orch.CoinConsoleState(
+        mint="CuAgWRcsKuNBoXLvytiRc1BQ4yF19gcxkX8ufmHNpump",
+        postdex_samples=212,
+        next_interval_s=2.4,
+    )
+    line = orch.format_metrics_line(state, columns=40)
+    assert len(line) <= 40
+    assert line.endswith("…")
+
+
+def test_dashboard_noisy_events_do_not_add_newlines():
+    stream = _FakeTty()
+    handler = orch.PrettyConsoleHandler(stream, console_display="dashboard")
+    coin = "CuAgWRcsKuNBoXLvytiRc1BQ4yF19gcxkX8ufmHNpump"
+
+    handler.emit(_metrics_record(max_concurrent_coins=5))
+    assert stream.getvalue().count("\n") == 1
+
+    for _ in range(5):
+        start = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="start",
+            args=(),
+            exc_info=None,
+        )
+        start.event = "subprocess_start"
+        start.coin = coin
+        start.stage = "post_migration_dexscreener"
+        handler.emit(start)
+
+        done = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="done",
+            args=(),
+            exc_info=None,
+        )
+        done.event = "subprocess_complete"
+        done.coin = coin
+        done.stage = "post_migration_dexscreener"
+        done.elapsed_seconds = 0.44
+        handler.emit(done)
+
+        snap = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="snap",
+            args=(),
+            exc_info=None,
+        )
+        snap.event = "post_migration_dex_snapshot"
+        snap.coin = coin
+        snap.samples = 186
+        snap.next_interval_seconds = 2.4
+        handler.emit(snap)
+
+    output = stream.getvalue()
+    assert "post_migration_dexscreener started" not in output
+    assert "post_migration_dexscreener finished" not in output
+    assert "post-migration Dex snapshot" not in output
+    assert "dex#186" in output
+    assert "\x1b[2A" in output
+
+
+def test_pretty_console_handler_verbose_uses_single_line_progress():
+    stream = _FakeTty()
+    handler = orch.PrettyConsoleHandler(stream, console_display="verbose")
+    handler.emit(_metrics_record())
+    output = stream.getvalue()
+    assert "\x1b[2A" not in output
+    assert "\r" in output
+
+
+def test_post_migration_dex_tracking_command_uses_onchain_history(tmp_path):
+    config = orch.OrchestratorConfig(
+        pumpportal_jsonl_path=tmp_path / "migrations.jsonl",
+        pumpportal_script_path=Path("pumpportal_ws.py"),
+        capture_script_path=Path("solana_coin_1h_capture.py"),
+        risk_report_script_path=Path("solana_risk_report.py"),
+        dexscreener_script_path=Path("dexscreener_api.py"),
+        website_grader_script_path=Path("website_grader_v2.py"),
+        telegram_info_script_path=Path("telegram_info.py"),
+        state_path=tmp_path / "state.json",
+        post_migration_dex_out_root=tmp_path / "data" / "raw" / "onchain",
+    )
+    orchestrator = orch.MemeCoinPipelineOrchestrator(
+        config=config,
+        logger=orch.setup_logging("ERROR"),
+    )
+    track = orch.PostMigrationDexTrack(mint="Mint111")
+
+    command = orchestrator.build_post_migration_dex_command(track)
+
+    assert "--token" in command
+    assert command[command.index("--token") + 1] == "Mint111"
+    assert "--out" in command
+    assert command[command.index("--out") + 1] == str(tmp_path / "data" / "raw" / "onchain")
+    assert "--append-history" in command
+    assert "--timestamped-raw" in command
+    assert "--quiet" in command
+    assert "--endpoint-profile" in command
+    assert command[command.index("--endpoint-profile") + 1] == "market"
+    assert command[command.index("--sleep") + 1] == "0.0"
+
+
+def test_post_migration_dex_interval_splits_global_request_budget(tmp_path):
+    config = orch.OrchestratorConfig(
+        pumpportal_jsonl_path=tmp_path / "migrations.jsonl",
+        pumpportal_script_path=Path("pumpportal_ws.py"),
+        capture_script_path=Path("solana_coin_1h_capture.py"),
+        risk_report_script_path=Path("solana_risk_report.py"),
+        dexscreener_script_path=Path("dexscreener_api.py"),
+        website_grader_script_path=Path("website_grader_v2.py"),
+        telegram_info_script_path=Path("telegram_info.py"),
+        state_path=tmp_path / "state.json",
+        post_migration_dex_requests_per_minute=50.0,
+        post_migration_dex_requests_per_snapshot=1,
+    )
+    orchestrator = orch.MemeCoinPipelineOrchestrator(
+        config=config,
+        logger=orch.setup_logging("ERROR"),
+    )
+
+    assert orchestrator.post_migration_dex_interval_seconds(active_count=2) == 2.4
+
+
+def test_post_migration_dex_tracking_respects_capacity(tmp_path):
+    config = orch.OrchestratorConfig(
+        pumpportal_jsonl_path=tmp_path / "migrations.jsonl",
+        pumpportal_script_path=Path("pumpportal_ws.py"),
+        capture_script_path=Path("solana_coin_1h_capture.py"),
+        risk_report_script_path=Path("solana_risk_report.py"),
+        dexscreener_script_path=Path("dexscreener_api.py"),
+        website_grader_script_path=Path("website_grader_v2.py"),
+        telegram_info_script_path=Path("telegram_info.py"),
+        state_path=tmp_path / "state.json",
+        max_post_migration_tracked_coins=1,
+    )
+    orchestrator = orch.MemeCoinPipelineOrchestrator(
+        config=config,
+        logger=orch.setup_logging("ERROR"),
+    )
+
+    orchestrator.start_post_migration_dex_tracking(
+        orch.CoinContext(mint="Mint111", pair_addresses=(), migration_event={})
+    )
+    orchestrator.start_post_migration_dex_tracking(
+        orch.CoinContext(mint="Mint222", pair_addresses=(), migration_event={})
+    )
+
+    assert sorted(orchestrator.post_migration_dex_tracks) == ["Mint111"]
+
+
+def test_migration_capacity_skips_instead_of_queueing(tmp_path, monkeypatch):
+    config = orch.OrchestratorConfig(
+        pumpportal_jsonl_path=tmp_path / "migrations.jsonl",
+        pumpportal_script_path=Path("pumpportal_ws.py"),
+        capture_script_path=Path("solana_coin_1h_capture.py"),
+        risk_report_script_path=Path("solana_risk_report.py"),
+        dexscreener_script_path=Path("dexscreener_api.py"),
+        website_grader_script_path=Path("website_grader_v2.py"),
+        telegram_info_script_path=Path("telegram_info.py"),
+        state_path=tmp_path / "state.json",
+        status_jsonl_path=tmp_path / "status.jsonl",
+        max_concurrent_coins=1,
+    )
+    orchestrator = orch.MemeCoinPipelineOrchestrator(
+        config=config,
+        logger=orch.setup_logging("ERROR"),
+    )
+    started: list[str] = []
+    monkeypatch.setattr(orchestrator, "start_coin_task", lambda ctx: started.append(ctx.mint))
+
+    async def runner() -> None:
+        blocker = asyncio.create_task(asyncio.sleep(60))
+        orchestrator.active_tasks["MintActive"] = blocker
+        try:
+            orchestrator.seen_mints.add("MintSkip")
+            await orchestrator.handle_migration_event({"mint": "MintSkip"}, "MintSkip")
+
+            assert started == []
+            assert orchestrator.metrics.eligible_migrations == 1
+            assert orchestrator.metrics.skipped_due_to_concurrency == 1
+            assert orchestrator.metrics.coins_started == 0
+            assert orchestrator.skipped_mints == {"MintSkip"}
+            assert orchestrator.current_stage["MintSkip"] == "skipped_capacity"
+
+            orchestrator.active_tasks.clear()
+            await orchestrator.handle_migration_event({"mint": "MintSkip"}, "MintSkip")
+            assert started == []
+            assert orchestrator.metrics.duplicate_migrations == 1
+
+            orchestrator.seen_mints.add("MintNext")
+            await orchestrator.handle_migration_event({"mint": "MintNext"}, "MintNext")
+            assert started == ["MintNext"]
+            assert orchestrator.metrics.coins_started == 1
+        finally:
+            blocker.cancel()
+            await asyncio.gather(blocker, return_exceptions=True)
+
+    asyncio.run(runner())
+
+
+def test_validate_requires_jsonl_when_tail_only(tmp_path):
+    missing = tmp_path / "missing.jsonl"
+    config = orch.OrchestratorConfig(
+        pumpportal_jsonl_path=missing,
+        pumpportal_script_path=Path("pumpportal_ws.py"),
+        capture_script_path=Path("solana_coin_1h_capture.py"),
+        risk_report_script_path=Path("solana_risk_report.py"),
+        dexscreener_script_path=Path("dexscreener_api.py"),
+        website_grader_script_path=Path("website_grader_v2.py"),
+        telegram_info_script_path=Path("telegram_info.py"),
+        state_path=tmp_path / "state.json",
+        run_pumpportal=False,
+    )
+    orchestrator = orch.MemeCoinPipelineOrchestrator(
+        config=config,
+        logger=orch.setup_logging("ERROR"),
+    )
+
+    try:
+        orchestrator.validate_pumpportal_jsonl_setup()
+        raised = False
+    except FileNotFoundError:
+        raised = True
+
+    assert raised
+
+
+def test_wait_for_pumpportal_jsonl(tmp_path):
+    jsonl = tmp_path / "stream.jsonl"
+
+    async def runner() -> None:
+        config = orch.OrchestratorConfig(
+            pumpportal_jsonl_path=jsonl,
+            pumpportal_script_path=Path("pumpportal_ws.py"),
+            capture_script_path=Path("solana_coin_1h_capture.py"),
+            risk_report_script_path=Path("solana_risk_report.py"),
+            dexscreener_script_path=Path("dexscreener_api.py"),
+            website_grader_script_path=Path("website_grader_v2.py"),
+            telegram_info_script_path=Path("telegram_info.py"),
+            state_path=tmp_path / "state.json",
+            pumpportal_jsonl_wait_seconds=2.0,
+        )
+        orchestrator = orch.MemeCoinPipelineOrchestrator(
+            config=config,
+            logger=orch.setup_logging("ERROR"),
+        )
+
+        async def touch_file() -> None:
+            await asyncio.sleep(0.05)
+            jsonl.write_text('{"event_type":"new_token","mint":"Mint111"}\n', encoding="utf-8")
+
+        touch_task = asyncio.create_task(touch_file())
+        await orchestrator.wait_for_pumpportal_jsonl(None)
+        await touch_task
+        assert orchestrator._pumpportal_jsonl_ready
+
+    asyncio.run(runner())
+
+
+def test_pumpportal_command_passes_raw_jsonl(tmp_path, monkeypatch):
+    jsonl = tmp_path / "migrations" / "day.jsonl"
+    script = tmp_path / "pumpportal_ws.py"
+    script.write_text("", encoding="utf-8")
+
+    captured: list[list[str]] = []
+
+    async def fake_exec(*args, **kwargs):
+        captured.append([str(a) for a in args])
+
+        class Proc:
+            returncode = None
+
+            stdout = None
+            stderr = None
+
+        return Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    config = orch.OrchestratorConfig(
+        pumpportal_jsonl_path=jsonl,
+        pumpportal_script_path=script,
+        capture_script_path=Path("solana_coin_1h_capture.py"),
+        risk_report_script_path=Path("solana_risk_report.py"),
+        dexscreener_script_path=Path("dexscreener_api.py"),
+        website_grader_script_path=Path("website_grader_v2.py"),
+        telegram_info_script_path=Path("telegram_info.py"),
+        state_path=tmp_path / "state.json",
+        stage_log_root=None,
+    )
+    orchestrator = orch.MemeCoinPipelineOrchestrator(
+        config=config,
+        logger=orch.setup_logging("ERROR"),
+    )
+
+    asyncio.run(orchestrator.start_pumpportal_process())
+
+    command = captured[0]
+    assert "--raw-jsonl" in command
+    assert command[command.index("--raw-jsonl") + 1] == str(jsonl.resolve())

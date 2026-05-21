@@ -165,12 +165,17 @@ def utc_iso_from_ms(timestamp_ms: int) -> str:
     return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()
 
 
-def build_raw_file_path(repo_root: Path) -> Path:
-    raw_dir = repo_root / RAW_SUBDIR
+def default_raw_jsonl_path(repo_root: Path | None = None) -> Path:
+    root = repo_root or Path(__file__).resolve().parent
+    raw_dir = root / RAW_SUBDIR
     raw_dir.mkdir(parents=True, exist_ok=True)
-
     current_day = datetime.now(timezone.utc).date().isoformat()
     return raw_dir / f"{current_day}.jsonl"
+
+
+def build_raw_file_path(repo_root: Path) -> Path:
+    """Backward-compatible alias for default_raw_jsonl_path."""
+    return default_raw_jsonl_path(repo_root)
 
 
 def extract_mint(data: dict[str, Any]) -> str | None:
@@ -361,6 +366,16 @@ def parse_args() -> argparse.Namespace:
         help="How often to print aggregate metrics in metrics mode.",
     )
 
+    parser.add_argument(
+        "--raw-jsonl",
+        type=Path,
+        default=None,
+        help=(
+            "JSONL output path. Parent directories are created if needed. "
+            "Default: data/raw/migrations/<UTC-date>.jsonl under the script directory."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -375,7 +390,11 @@ async def main() -> None:
     if api_key:
         url += f"?api-key={api_key}"
 
-    raw_path = build_raw_file_path(repo_root)
+    if args.raw_jsonl is not None:
+        raw_path = args.raw_jsonl.expanduser().resolve()
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        raw_path = default_raw_jsonl_path(repo_root)
     metrics = StreamMetrics()
 
     print("listening to PumpPortal WebSocket")

@@ -29,10 +29,10 @@ import os
 import random
 import signal
 import shlex
+import shutil
 import sys
 import time
 import traceback
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +41,8 @@ from urllib.parse import urlparse
 
 
 LOGGER_NAME = "meme_coin_orchestrator"
+DEFAULT_ORCH_CONFIG_PATH = Path("config/data_acq_orch.json")
+BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
 # -----------------------------
@@ -96,13 +98,463 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
-def setup_logging(level: str) -> logging.Logger:
+def format_stage_map(stage_map: Mapping[str, Any]) -> str:
+    if not stage_map:
+        return "-"
+    parts = []
+    for mint, stage in sorted(stage_map.items()):
+        short_mint = short_mint_label(str(mint))
+        parts.append(f"{short_mint}:{stage}")
+    return ", ".join(parts)
+
+
+def short_mint_label(mint: str) -> str:
+    text = mint.strip()
+    return text[:6] if text else "?"
+
+
+def truncate_line(text: str, columns: int) -> str:
+    if columns <= 0 or len(text) <= columns:
+        return text
+    if columns <= 1:
+        return text[:columns]
+    return text[: columns - 1] + "…"
+
+
+def format_elapsed_badge(started_at: float) -> str:
+    elapsed = max(0.0, time.time() - started_at)
+    if elapsed >= 3600:
+        return f"{elapsed / 3600:.0f}h"
+    if elapsed >= 60:
+        return f"{elapsed / 60:.0f}m"
+    return f"{elapsed:.0f}s"
+
+
+@dataclass
+class CoinConsoleState:
+    mint: str
+    pipeline_stage: str = ""
+    running_stage: str = ""
+    postdex_samples: int = 0
+    next_interval_s: Optional[float] = None
+    last_elapsed_s: Optional[float] = None
+
+
+@dataclass
+class ConsoleDashboardState:
+    started_at: float = field(default_factory=time.time)
+    spinner_tick: int = 0
+    rows_read: int = 0
+    currently_tracked_mints: int = 0
+    migrated_coins_detected: int = 0
+    eligible_migrations: int = 0
+    active_coin_pipelines: int = 0
+    post_migration_dex_tracked_coins: int = 0
+    skipped_due_to_concurrency: int = 0
+    completed_coin_analyses: int = 0
+    failed_coin_analyses: int = 0
+    max_concurrent_coins: int = 0
+    current_stage: dict[str, str] = field(default_factory=dict)
+    coins: dict[str, CoinConsoleState] = field(default_factory=dict)
+    last_activity: str = "starting…"
+
+
+def format_coin_badges(state: ConsoleDashboardState) -> str:
+    mints = sorted(set(state.current_stage) | set(state.coins))
+    if not mints:
+        return "-"
+    parts: list[str] = []
+    for mint in mints:
+        short = short_mint_label(mint)
+        coin_state = state.coins.get(mint)
+        if coin_state and coin_state.postdex_samples > 0:
+            next_part = ""
+            if coin_state.next_interval_s is not None:
+                next_part = f"~{coin_state.next_interval_s:g}s"
+            parts.append(f"{short}:dex#{coin_state.postdex_samples}{next_part}")
+            continue
+        if coin_state and coin_state.running_stage:
+            parts.append(f"{short}:{coin_state.running_stage}…")
+            continue
+        stage = state.current_stage.get(mint) or (coin_state.pipeline_stage if coin_state else "")
+        if stage:
+            parts.append(f"{short}:{stage}")
+        else:
+            parts.append(short)
+    return " ".join(parts)
+
+
+def format_metrics_line(state: ConsoleDashboardState, columns: int) -> str:
+    spinner = "|/-\\"[state.spinner_tick % 4]
+    elapsed = format_elapsed_badge(state.started_at)
+    max_coins = state.max_concurrent_coins or "?"
+    text = (
+        f"[{spinner}] {elapsed} "
+        f"rows={state.rows_read} "
+        f"mig={state.migrated_coins_detected} "
+        f"elig={state.eligible_migrations} "
+        f"act={state.active_coin_pipelines}/{max_coins} "
+        f"postdex={state.post_migration_dex_tracked_coins} "
+        f"skip={state.skipped_due_to_concurrency} "
+        f"done={state.completed_coin_analyses} "
+        f"fail={state.failed_coin_analyses} "
+        f"| {format_coin_badges(state)}"
+    )
+    return truncate_line(text, columns)
+
+
+def format_activity_line(state: ConsoleDashboardState, columns: int) -> str:
+    activity = state.last_activity.strip() or "…"
+    return truncate_line(f"> {activity}", columns)
+
+
+class PrettyConsoleHandler(logging.StreamHandler):
+    """Human-friendly console logs: 2-line TTY dashboard or verbose line-per-event mode."""
+
+    suppressed_events = {
+        "mint_recorded",
+        "subprocess_output",
+        "status_event_write_failed",
+        "state_loaded",
+        "subprocess_dry_run",
+    }
+
+    silent_dashboard_events = {
+        "subprocess_start",
+        "subprocess_complete",
+        "post_migration_dex_snapshot",
+        "dexscreener_retry_wait",
+        "dexscreener_attempt_result",
+    }
+
+    banner_dashboard_events = {
+        "scan_started",
+        "orchestrator_stopped",
+    }
+
+    def __init__(
+        self,
+        stream: Optional[TextIO] = None,
+        *,
+        console_display: str = "dashboard",
+    ):
+        super().__init__(stream or sys.stdout)
+        self.console_display = console_display
+        self.state = ConsoleDashboardState()
+        self._dashboard_drawn = False
+        self._last_dashboard_width = 0
+        self._last_progress_text = ""
+        self._last_progress_width = 0
+        self._progress_active = False
+        self._supports_live_dashboard = bool(getattr(self.stream, "isatty", lambda: False)())
+
+    @property
+    def _use_dashboard(self) -> bool:
+        return self.console_display == "dashboard" and self._supports_live_dashboard
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            event = str(getattr(record, "event", "") or "")
+            if event in self.suppressed_events:
+                return
+
+            if self._use_dashboard:
+                self._emit_dashboard(record, event)
+                return
+
+            self._emit_verbose(record, event)
+        except Exception:
+            self.handleError(record)
+
+    def _emit_verbose(self, record: logging.LogRecord, event: str) -> None:
+        rendered = self.render_record(record, event)
+        if rendered is None:
+            return
+
+        if event == "orchestrator_metrics" and self._supports_live_dashboard:
+            self._write_single_progress(rendered)
+            return
+
+        self._clear_single_progress_line()
+        self.stream.write(rendered + self.terminator)
+        self.flush()
+
+    def _emit_dashboard(self, record: logging.LogRecord, event: str) -> None:
+        self._update_dashboard_state(record, event)
+
+        if event in self.silent_dashboard_events or event == "orchestrator_metrics":
+            self._refresh_dashboard()
+            return
+
+        rendered = self.render_record(record, event)
+        if rendered is None:
+            self._refresh_dashboard()
+            return
+
+        if event in self.banner_dashboard_events or record.levelno >= logging.ERROR:
+            self._print_banner_line(rendered)
+            return
+
+        self.state.last_activity = rendered
+        self._refresh_dashboard()
+
+    def _ensure_coin(self, mint: str) -> CoinConsoleState:
+        if mint not in self.state.coins:
+            self.state.coins[mint] = CoinConsoleState(mint=mint)
+        return self.state.coins[mint]
+
+    def _update_dashboard_state(self, record: logging.LogRecord, event: str) -> None:
+        self.state.spinner_tick += 1
+        coin = str(getattr(record, "coin", "") or getattr(record, "mint", "") or "")
+        stage = str(getattr(record, "stage", "") or "")
+
+        if event == "scan_started":
+            self.state.max_concurrent_coins = int(getattr(record, "max_concurrent_coins", 0) or 0)
+        elif event == "orchestrator_metrics":
+            self.state.rows_read = int(getattr(record, "rows_read", 0) or 0)
+            self.state.currently_tracked_mints = int(
+                getattr(record, "currently_tracked_mints", 0) or 0
+            )
+            self.state.migrated_coins_detected = int(
+                getattr(record, "migrated_coins_detected", 0) or 0
+            )
+            self.state.eligible_migrations = int(getattr(record, "eligible_migrations", 0) or 0)
+            self.state.active_coin_pipelines = int(
+                getattr(record, "active_coin_pipelines", 0) or 0
+            )
+            self.state.post_migration_dex_tracked_coins = int(
+                getattr(record, "post_migration_dex_tracked_coins", 0) or 0
+            )
+            self.state.skipped_due_to_concurrency = int(
+                getattr(record, "skipped_due_to_concurrency", 0) or 0
+            )
+            self.state.completed_coin_analyses = int(
+                getattr(record, "completed_coin_analyses", 0) or 0
+            )
+            self.state.failed_coin_analyses = int(
+                getattr(record, "failed_coin_analyses", 0) or 0
+            )
+            stage_map = getattr(record, "current_stage", {}) or {}
+            if isinstance(stage_map, Mapping):
+                self.state.current_stage = {str(k): str(v) for k, v in stage_map.items()}
+                for mint, pipeline_stage in self.state.current_stage.items():
+                    self._ensure_coin(mint).pipeline_stage = pipeline_stage
+        elif event == "subprocess_start" and coin:
+            self._ensure_coin(coin).running_stage = stage
+        elif event == "subprocess_complete" and coin:
+            coin_state = self._ensure_coin(coin)
+            coin_state.running_stage = ""
+            elapsed = getattr(record, "elapsed_seconds", None)
+            if elapsed is not None:
+                coin_state.last_elapsed_s = float(elapsed)
+        elif event == "post_migration_dex_snapshot" and coin:
+            coin_state = self._ensure_coin(coin)
+            coin_state.postdex_samples = int(getattr(record, "samples", 0) or 0)
+            next_interval = getattr(record, "next_interval_seconds", None)
+            if next_interval is not None:
+                coin_state.next_interval_s = float(next_interval)
+        elif event == "post_migration_dex_tracking_started" and coin:
+            coin_state = self._ensure_coin(coin)
+            coin_state.postdex_samples = 0
+        elif event == "post_migration_dex_tracking_completed" and coin:
+            coin_state = self._ensure_coin(coin)
+            coin_state.postdex_samples = int(getattr(record, "samples", 0) or 0)
+            coin_state.running_stage = ""
+        elif event == "coin_pipeline_started" and coin:
+            self._ensure_coin(coin)
+        elif event in {"coin_pipeline_completed", "coin_pipeline_failed", "coin_pipeline_cancelled"} and coin:
+            coin_state = self.state.coins.get(coin)
+            if coin_state:
+                coin_state.running_stage = ""
+
+    def _refresh_dashboard(self) -> None:
+        columns = shutil.get_terminal_size((100, 20)).columns
+        line1 = format_metrics_line(self.state, columns)
+        line2 = format_activity_line(self.state, columns)
+        self._write_dashboard(line1, line2)
+
+    def _print_banner_line(self, text: str) -> None:
+        if self._dashboard_drawn:
+            self.stream.write("\x1b[2A\x1b[2K\r\x1b[2K\r")
+            self._dashboard_drawn = False
+            self._last_dashboard_width = 0
+        self.stream.write(text + self.terminator)
+        self.flush()
+        self.state.last_activity = text
+        self._refresh_dashboard()
+
+    def render_record(self, record: logging.LogRecord, event: str) -> Optional[str]:
+        if event in self.suppressed_events:
+            return None
+
+        coin = str(getattr(record, "coin", "") or "")
+        stage = str(getattr(record, "stage", "") or "")
+        level = record.levelname
+
+        if event == "scan_started":
+            return f"Watching {getattr(record, 'pumpportal_jsonl_path', '?')}  concurrency={getattr(record, 'max_concurrent_coins', '?')}"
+        if event == "pumpportal_jsonl_waiting":
+            return (
+                f"Waiting for PumpPortal JSONL: {getattr(record, 'path', '?')} "
+                f"(timeout={getattr(record, 'timeout_seconds', '?')}s)"
+            )
+        if event == "pumpportal_jsonl_ready":
+            return f"PumpPortal JSONL ready: {getattr(record, 'path', '?')}"
+        if event == "orchestrator_metrics":
+            return (
+                f"rows={getattr(record, 'rows_read', 0)} "
+                f"tracked={getattr(record, 'currently_tracked_mints', 0)} "
+                f"migrations={getattr(record, 'migrated_coins_detected', 0)} "
+                f"eligible={getattr(record, 'eligible_migrations', 0)} "
+                f"active={getattr(record, 'active_coin_pipelines', 0)} "
+                f"postdex={getattr(record, 'post_migration_dex_tracked_coins', 0)} "
+                f"skipped={getattr(record, 'skipped_due_to_concurrency', 0)} "
+                f"done={getattr(record, 'completed_coin_analyses', 0)} "
+                f"failed={getattr(record, 'failed_coin_analyses', 0)} "
+                f"stages={format_stage_map(getattr(record, 'current_stage', {}) or {})}"
+            )
+        if event == "migration_rejected_without_prior_mint":
+            return f"Skipping migration for unseen mint {coin}"
+        if event == "migration_skipped_due_to_concurrency":
+            return (
+                f"Skipped {coin}  capacity full "
+                f"active={getattr(record, 'active_coin_pipelines', '?')}/"
+                f"{getattr(record, 'max_concurrent_coins', '?')}"
+            )
+        if event == "coin_pipeline_started":
+            return f"Started {coin}  pairs={len(getattr(record, 'pair_addresses', []) or [])}"
+        if event == "subprocess_start":
+            return f"[{coin}] {stage} started"
+        if event == "subprocess_complete":
+            return f"[{coin}] {stage} finished in {getattr(record, 'elapsed_seconds', '?')}s"
+        if event == "dexscreener_dry_run_available":
+            return (
+                f"[{coin}] DexScreener dry-run "
+                f"website={getattr(record, 'website_url', None) or '-'}"
+            )
+        if event == "subprocess_timeout":
+            return f"[{coin}] {stage} timed out after {getattr(record, 'timeout_seconds', '?')}s"
+        if event == "dexscreener_attempt":
+            return f"[{coin}] DexScreener attempt {getattr(record, 'attempt', '?')}/{getattr(record, 'max_attempts', '?')}"
+        if event == "dexscreener_retry_wait":
+            return f"[{coin}] waiting {getattr(record, 'wait_seconds', '?')}s before next DexScreener attempt"
+        if event == "dexscreener_attempt_result":
+            return (
+                f"[{coin}] DexScreener available={getattr(record, 'available', '?')} "
+                f"website={getattr(record, 'website_url', None) or '-'} "
+                f"telegram={getattr(record, 'telegram_url', None) or '-'} "
+                f"x={getattr(record, 'x_url', None) or '-'}"
+            )
+        if event == "post_migration_dex_tracking_started":
+            return (
+                f"[{coin}] post-migration Dex tracking started "
+                f"active={getattr(record, 'active_tracks', '?')}/{getattr(record, 'max_tracks', '?')}"
+            )
+        if event == "post_migration_dex_tracking_skipped_capacity":
+            return f"[{coin}] post-migration Dex tracking skipped  tracker capacity full"
+        if event == "post_migration_dex_snapshot":
+            return (
+                f"[{coin}] post-migration Dex snapshot "
+                f"samples={getattr(record, 'samples', '?')} "
+                f"next~{getattr(record, 'next_interval_seconds', '?')}s"
+            )
+        if event == "post_migration_dex_tracking_completed":
+            return f"[{coin}] post-migration Dex tracking completed"
+        if event == "website_grader_skipped_no_website":
+            return f"[{coin}] website grader skipped  no website found"
+        if event == "telegram_info_skipped_no_telegram":
+            return f"[{coin}] telegram stage skipped  no telegram found"
+        if event == "coin_pipeline_completed":
+            return f"Completed {coin}"
+        if event == "coin_pipeline_failed":
+            return f"Failed {coin}: {getattr(record, 'error', record.getMessage())}"
+        if event == "coin_pipeline_cancelled":
+            return f"Cancelled {coin}"
+        if event == "orchestrator_stopped":
+            return (
+                f"Stopped  rows={getattr(record, 'rows_read', 0)} "
+                f"eligible={getattr(record, 'eligible_migrations', 0)} "
+                f"completed={getattr(record, 'completed_coin_analyses', 0)} "
+                f"failed={getattr(record, 'failed_coin_analyses', 0)}"
+            )
+
+        prefix = "WARN" if level == "WARNING" else ("ERR" if level == "ERROR" else level)
+        return f"{prefix}: {record.getMessage()}"
+
+    def _write_dashboard(self, line1: str, line2: str) -> None:
+        width = max(len(line1), len(line2))
+        if not self._dashboard_drawn:
+            self.stream.write(line1 + "\n" + line2)
+            self._dashboard_drawn = True
+        else:
+            pad1 = line1
+            pad2 = line2
+            if self._last_dashboard_width > len(line1):
+                pad1 = line1 + (" " * (self._last_dashboard_width - len(line1)))
+            if self._last_dashboard_width > len(line2):
+                pad2 = line2 + (" " * (self._last_dashboard_width - len(line2)))
+            self.stream.write("\x1b[2A\x1b[2K\r" + pad1 + "\n\x1b[2K\r" + pad2)
+        self.stream.flush()
+        self._last_dashboard_width = max(self._last_dashboard_width, width)
+
+    def _write_single_progress(self, text: str) -> None:
+        if not hasattr(self, "_last_progress_text"):
+            self._last_progress_text = ""
+            self._last_progress_width = 0
+            self._progress_active = False
+        padded = text
+        if self._last_progress_width > len(text):
+            padded = text + (" " * (self._last_progress_width - len(text)))
+        self.stream.write("\r" + padded)
+        self.flush()
+        self._progress_active = True
+        self._last_progress_text = text
+        self._last_progress_width = max(self._last_progress_width, len(text))
+
+    def _clear_single_progress_line(self) -> None:
+        if not getattr(self, "_progress_active", False):
+            return
+        self.stream.write("\r" + (" " * getattr(self, "_last_progress_width", 0)) + "\r")
+        self.flush()
+        self._progress_active = False
+
+
+def enable_ansi_stdout() -> None:
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            enable_vt = 0x0004
+            kernel32.SetConsoleMode(handle, mode.value | enable_vt)
+    except Exception:
+        return
+
+
+def setup_logging(
+    level: str,
+    console_format: str = "pretty",
+    *,
+    console_display: str = "dashboard",
+) -> logging.Logger:
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
     logger.handlers.clear()
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter())
+    if console_format == "json":
+        handler: logging.Handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(JsonFormatter())
+    else:
+        if console_display == "dashboard":
+            enable_ansi_stdout()
+        handler = PrettyConsoleHandler(
+            sys.stdout,
+            console_display=console_display if console_format == "pretty" else "verbose",
+        )
     logger.addHandler(handler)
     logger.propagate = False
     return logger
@@ -127,9 +579,64 @@ def make_json_safe(value: Any) -> Any:
 # -----------------------------
 
 
+PUMPPORTAL_RAW_SUBDIR = Path("data") / "raw" / "migrations"
+
+
 def default_pumpportal_jsonl() -> Path:
+    """Same layout as pumpportal_ws.py default_raw_jsonl_path (UTC date file)."""
     day = datetime.now(timezone.utc).date().isoformat()
-    return Path("data") / "raw" / "migrations" / f"{day}.jsonl"
+    return PUMPPORTAL_RAW_SUBDIR / f"{day}.jsonl"
+
+
+def resolve_pumpportal_jsonl_path(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
+def load_json_config_defaults(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = load_json_file(path)
+    if not isinstance(data, dict):
+        raise ValueError(f"Config file must contain a JSON object: {path}")
+    return data
+
+
+def coerce_argparse_defaults(defaults: Mapping[str, Any], path_keys: set[str]) -> dict[str, Any]:
+    coerced: dict[str, Any] = {}
+    for key, value in defaults.items():
+        if value is None:
+            coerced[key] = None
+        elif key in path_keys:
+            coerced[key] = Path(value)
+        else:
+            coerced[key] = value
+    return coerced
+
+
+def b58decode(value: str) -> bytes:
+    num = 0
+    for char in value:
+        num *= 58
+        idx = BASE58_ALPHABET.find(char)
+        if idx < 0:
+            raise ValueError("invalid base58 character")
+        num += idx
+
+    raw = num.to_bytes((num.bit_length() + 7) // 8, "big") if num else b""
+    pad = len(value) - len(value.lstrip("1"))
+    return b"\x00" * pad + raw
+
+
+def is_valid_solana_address(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    try:
+        return len(b58decode(text)) == 32
+    except Exception:
+        return False
 
 
 @dataclass(frozen=True)
@@ -148,6 +655,7 @@ class OrchestratorConfig:
     run_pumpportal: bool = True
     pumpportal_duration_seconds: int = 0
     pumpportal_display: str = "bar"
+    pumpportal_jsonl_wait_seconds: float = 120.0
     pumpportal_command_template: Optional[str] = None
 
     max_concurrent_coins: int = 2
@@ -171,6 +679,8 @@ class OrchestratorConfig:
     capture_duration_seconds: int = 3600
     capture_timeout_grace_seconds: int = 900
     capture_out_root: Path = Path("data/raw/onchain")
+    capture_network_sample_seconds: float = 60.0
+    capture_network_sample_fee_addresses: bool = False
 
     risk_analysis_root: Path = Path("data/raw/analytics")
     risk_export_root: Path = Path("data/raw/orchestrator/risk_reports")
@@ -185,6 +695,15 @@ class OrchestratorConfig:
     dexscreener_max_attempts: int = 30
     dexscreener_script_sleep_seconds: float = 1.1
     dexscreener_subprocess_timeout_seconds: int = 180
+
+    max_post_migration_tracked_coins: int = 6
+    post_migration_dex_tracking_hours: float = 24.0
+    post_migration_dex_requests_per_minute: float = 50.0
+    post_migration_dex_requests_per_snapshot: int = 1
+    post_migration_dex_endpoint_profile: str = "market"
+    post_migration_dex_request_sleep_seconds: float = 0.0
+    post_migration_dex_out_root: Path = Path("data/raw/onchain")
+    post_migration_dex_timestamped_raw: bool = True
 
     website_output_root: Path = Path("data/raw/analytics")
     website_subprocess_timeout_seconds: int = 900
@@ -215,12 +734,18 @@ class Metrics:
     completed_coin_analyses: int = 0
     failed_coin_analyses: int = 0
 
-    def to_dict(self, active_count: int, tracked_count: int) -> dict[str, Any]:
+    def to_dict(
+        self,
+        active_count: int,
+        tracked_count: int,
+        post_migration_dex_tracked_count: int = 0,
+    ) -> dict[str, Any]:
         data = dataclasses.asdict(self)
         data.update(
             {
                 "active_coin_pipelines": active_count,
                 "currently_tracked_mints": tracked_count,
+                "post_migration_dex_tracked_coins": post_migration_dex_tracked_count,
             }
         )
         return data
@@ -233,6 +758,43 @@ class CoinContext:
     migration_event: dict[str, Any]
     coin_name: Optional[str] = None
     symbol: Optional[str] = None
+
+
+@dataclass
+class PostMigrationDexTrack:
+    mint: str
+    pair_addresses: tuple[str, ...] = ()
+    started_at_epoch: float = field(default_factory=time.time)
+    end_at_epoch: float = 0.0
+    next_due_at_epoch: float = field(default_factory=time.time)
+    samples: int = 0
+    last_sample_at_utc: Optional[str] = None
+    last_error: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mint": self.mint,
+            "pair_addresses": list(self.pair_addresses),
+            "started_at_epoch": self.started_at_epoch,
+            "end_at_epoch": self.end_at_epoch,
+            "next_due_at_epoch": self.next_due_at_epoch,
+            "samples": self.samples,
+            "last_sample_at_utc": self.last_sample_at_utc,
+            "last_error": self.last_error,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "PostMigrationDexTrack":
+        return cls(
+            mint=str(data["mint"]),
+            pair_addresses=tuple(map(str, data.get("pair_addresses") or ())),
+            started_at_epoch=float(data.get("started_at_epoch") or time.time()),
+            end_at_epoch=float(data.get("end_at_epoch") or 0.0),
+            next_due_at_epoch=float(data.get("next_due_at_epoch") or time.time()),
+            samples=int(data.get("samples") or 0),
+            last_sample_at_utc=data.get("last_sample_at_utc"),
+            last_error=data.get("last_error"),
+        )
 
 
 @dataclass(frozen=True)
@@ -469,7 +1031,7 @@ def build_template_command(
 
 
 async def log_stream(
-    reader: asyncio.StreamReader,
+    reader: Optional[asyncio.StreamReader],
     *,
     logger: logging.Logger,
     mint: str,
@@ -477,6 +1039,9 @@ async def log_stream(
     stream_name: str,
     stage_log_file: Optional[TextIO] = None,
 ) -> None:
+    if reader is None:
+        return
+
     while True:
         line = await reader.readline()
         if not line:
@@ -669,18 +1234,30 @@ class MemeCoinPipelineOrchestrator:
         self.seen_mints: set[str] = set()
         self.completed_mints: set[str] = set()
         self.failed_mints: set[str] = set()
+        self.skipped_mints: set[str] = set()
         self.active_tasks: dict[str, asyncio.Task[None]] = {}
-        self.pending_contexts: deque[CoinContext] = deque()
-        self.pending_mints: set[str] = set()
         self.current_stage: dict[str, str] = {}
+        self.post_migration_dex_tracks: dict[str, PostMigrationDexTrack] = {}
+        self._pumpportal_jsonl_ready = False
 
         self.load_state()
 
     @property
     def terminal_mints(self) -> set[str]:
         if self.config.retry_failed:
-            return set(self.completed_mints)
-        return self.completed_mints | self.failed_mints
+            return self.completed_mints | self.skipped_mints
+        return self.completed_mints | self.failed_mints | self.skipped_mints
+
+    def active_post_migration_dex_tracks(self) -> list[PostMigrationDexTrack]:
+        now_epoch = time.time()
+        expired = [
+            mint
+            for mint, track in self.post_migration_dex_tracks.items()
+            if track.end_at_epoch <= now_epoch
+        ]
+        for mint in expired:
+            self.post_migration_dex_tracks.pop(mint, None)
+        return list(self.post_migration_dex_tracks.values())
 
     def emit_status_event(self, event_type: str, **fields: Any) -> None:
         if self.config.status_jsonl_path is None:
@@ -726,6 +1303,16 @@ class MemeCoinPipelineOrchestrator:
         self.seen_mints = set(map(str, state.get("seen_mints", [])))
         self.completed_mints = set(map(str, state.get("completed_mints", [])))
         self.failed_mints = set(map(str, state.get("failed_mints", [])))
+        self.skipped_mints = set(map(str, state.get("skipped_mints", [])))
+        now_epoch = time.time()
+        self.post_migration_dex_tracks = {}
+        for item in state.get("post_migration_dex_tracks", []) or []:
+            if not isinstance(item, Mapping) or not item.get("mint"):
+                continue
+            with contextlib.suppress(Exception):
+                track = PostMigrationDexTrack.from_dict(item)
+                if track.end_at_epoch > now_epoch:
+                    self.post_migration_dex_tracks[track.mint] = track
 
         self.logger.info(
             "state_loaded",
@@ -736,6 +1323,8 @@ class MemeCoinPipelineOrchestrator:
                 "seen_mints": len(self.seen_mints),
                 "completed_mints": len(self.completed_mints),
                 "failed_mints": len(self.failed_mints),
+                "skipped_mints": len(self.skipped_mints),
+                "post_migration_dex_tracks": len(self.post_migration_dex_tracks),
             },
         )
 
@@ -748,10 +1337,15 @@ class MemeCoinPipelineOrchestrator:
             "seen_mints": sorted(self.seen_mints),
             "completed_mints": sorted(self.completed_mints),
             "failed_mints": sorted(self.failed_mints),
-            "pending_mints": sorted(self.pending_mints),
+            "skipped_mints": sorted(self.skipped_mints),
+            "post_migration_dex_tracks": [
+                track.to_dict()
+                for track in sorted(self.active_post_migration_dex_tracks(), key=lambda item: item.mint)
+            ],
             "metrics": self.metrics.to_dict(
                 active_count=len(self.active_tasks),
                 tracked_count=len(self.seen_mints),
+                post_migration_dex_tracked_count=len(self.active_post_migration_dex_tracks()),
             ),
             "current_stage": dict(self.current_stage),
         }
@@ -776,9 +1370,72 @@ class MemeCoinPipelineOrchestrator:
                 extra={"event": "dry_run_missing_script_paths_ignored", "missing": missing},
             )
 
+    def validate_pumpportal_jsonl_setup(self) -> None:
+        path = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
+
+        if self.config.run_pumpportal or self.config.dry_run:
+            return
+
+        if not path.exists():
+            raise FileNotFoundError(
+                f"PumpPortal JSONL not found: {path}. "
+                "Omit --no-pumpportal to launch pumpportal_ws.py and create it, "
+                "or pass --pumpportal-jsonl with an existing file."
+            )
+
+    async def wait_for_pumpportal_jsonl(
+        self,
+        proc: Optional[asyncio.subprocess.Process],
+    ) -> None:
+        path = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
+        deadline = time.monotonic() + self.config.pumpportal_jsonl_wait_seconds
+        logged_wait = False
+
+        while time.monotonic() < deadline:
+            if path.exists():
+                self._pumpportal_jsonl_ready = True
+                self.logger.info(
+                    "pumpportal_jsonl_ready",
+                    extra={"event": "pumpportal_jsonl_ready", "path": str(path)},
+                )
+                return
+
+            if proc is not None and proc.returncode is not None:
+                raise RuntimeError(
+                    f"PumpPortal writer exited before creating {path} "
+                    f"(return code {proc.returncode}). "
+                    "Check stage logs under data/raw/orchestrator/stage_logs/orchestrator/."
+                )
+
+            if not logged_wait:
+                self.logger.info(
+                    "pumpportal_jsonl_waiting",
+                    extra={
+                        "event": "pumpportal_jsonl_waiting",
+                        "path": str(path),
+                        "timeout_seconds": self.config.pumpportal_jsonl_wait_seconds,
+                    },
+                )
+                logged_wait = True
+
+            await asyncio.sleep(0.25)
+
+        raise TimeoutError(
+            f"Timed out after {self.config.pumpportal_jsonl_wait_seconds:.0f}s waiting for "
+            f"PumpPortal JSONL at {path}. Ensure pumpportal_ws.py can connect and write."
+        )
+
+    def apply_start_at_end_if_needed(self) -> None:
+        if not self.config.start_at_end:
+            return
+        if self.config.state_path.exists():
+            return
+        self.initialize_offset_to_end()
+
     async def start_pumpportal_process(
         self,
     ) -> tuple[asyncio.subprocess.Process, list[asyncio.Task[None]], Optional[TextIO]]:
+        raw_jsonl = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
         default_command = [
             self.config.python_executable,
             str(self.config.pumpportal_script_path),
@@ -786,6 +1443,8 @@ class MemeCoinPipelineOrchestrator:
             str(self.config.pumpportal_duration_seconds),
             "--display",
             self.config.pumpportal_display,
+            "--raw-jsonl",
+            str(raw_jsonl),
         ]
         command = build_template_command(
             self.config.pumpportal_command_template,
@@ -795,6 +1454,7 @@ class MemeCoinPipelineOrchestrator:
                 "script": self.config.pumpportal_script_path,
                 "duration_seconds": self.config.pumpportal_duration_seconds,
                 "display": self.config.pumpportal_display,
+                "raw_jsonl": raw_jsonl,
             },
         )
         command.extend(self.config.pumpportal_extra_args)
@@ -850,12 +1510,11 @@ class MemeCoinPipelineOrchestrator:
 
     async def run(self) -> None:
         self.validate_script_paths()
+        self.validate_pumpportal_jsonl_setup()
         self.install_signal_handlers()
 
-        if self.config.start_at_end and not self.config.state_path.exists():
-            self.initialize_offset_to_end()
-
         metrics_task = asyncio.create_task(self.metrics_reporter())
+        post_migration_dex_task = asyncio.create_task(self.post_migration_dex_scheduler())
         pumpportal_proc: Optional[asyncio.subprocess.Process] = None
         pumpportal_log_tasks: list[asyncio.Task[None]] = []
         pumpportal_log_file: Optional[TextIO] = None
@@ -865,6 +1524,9 @@ class MemeCoinPipelineOrchestrator:
                 pumpportal_proc, pumpportal_log_tasks, pumpportal_log_file = (
                     await self.start_pumpportal_process()
                 )
+                await self.wait_for_pumpportal_jsonl(pumpportal_proc)
+
+            self.apply_start_at_end_if_needed()
 
             await self.scan_loop()
 
@@ -879,7 +1541,8 @@ class MemeCoinPipelineOrchestrator:
                     pumpportal_log_file.close()
 
             metrics_task.cancel()
-            await asyncio.gather(metrics_task, return_exceptions=True)
+            post_migration_dex_task.cancel()
+            await asyncio.gather(metrics_task, post_migration_dex_task, return_exceptions=True)
 
             if self.active_tasks and not self.config.run_once:
                 for task in list(self.active_tasks.values()):
@@ -894,6 +1557,7 @@ class MemeCoinPipelineOrchestrator:
                     **self.metrics.to_dict(
                         active_count=len(self.active_tasks),
                         tracked_count=len(self.seen_mints),
+                        post_migration_dex_tracked_count=len(self.active_post_migration_dex_tracks()),
                     ),
                 },
             )
@@ -910,7 +1574,7 @@ class MemeCoinPipelineOrchestrator:
                 loop.add_signal_handler(sig, request_shutdown)
 
     def initialize_offset_to_end(self) -> None:
-        path = self.config.pumpportal_jsonl_path
+        path = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
         if not path.exists():
             return
 
@@ -950,13 +1614,14 @@ class MemeCoinPipelineOrchestrator:
                 await asyncio.sleep(self.config.scan_poll_seconds)
 
     async def read_available_lines(self) -> bool:
-        path = self.config.pumpportal_jsonl_path
+        path = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
 
         if not path.exists():
-            self.logger.info(
-                "pumpportal_file_missing",
-                extra={"event": "pumpportal_file_missing", "path": str(path)},
-            )
+            if not self._pumpportal_jsonl_ready:
+                self.logger.debug(
+                    "pumpportal_file_missing",
+                    extra={"event": "pumpportal_file_missing", "path": str(path)},
+                )
             return False
 
         stat = path.stat()
@@ -1086,7 +1751,7 @@ class MemeCoinPipelineOrchestrator:
             )
             return
 
-        if mint in self.active_tasks or mint in self.pending_mints or mint in self.terminal_mints:
+        if mint in self.active_tasks or mint in self.terminal_mints:
             self.metrics.duplicate_migrations += 1
             self.logger.info(
                 "migration_duplicate_ignored",
@@ -1094,7 +1759,7 @@ class MemeCoinPipelineOrchestrator:
                     "event": "migration_duplicate_ignored",
                     "coin": mint,
                     "active": mint in self.active_tasks,
-                    "pending": mint in self.pending_mints,
+                    "skipped": mint in self.skipped_mints,
                     "completed": mint in self.completed_mints,
                     "failed": mint in self.failed_mints,
                     "retry_failed_enabled": self.config.retry_failed,
@@ -1123,30 +1788,32 @@ class MemeCoinPipelineOrchestrator:
         )
 
         self.metrics.eligible_migrations += 1
-        self.metrics.coins_started += 1
 
         if len(self.active_tasks) >= self.config.max_concurrent_coins:
-            self.pending_contexts.append(ctx)
-            self.pending_mints.add(ctx.mint)
+            self.skipped_mints.add(ctx.mint)
+            self.current_stage[ctx.mint] = "skipped_capacity"
+            self.metrics.skipped_due_to_concurrency += 1
             self.logger.info(
-                "migration_queued_due_to_concurrency",
+                "migration_skipped_due_to_concurrency",
                 extra={
-                    "event": "migration_queued_due_to_concurrency",
+                    "event": "migration_skipped_due_to_concurrency",
                     "coin": mint,
                     "active_coin_pipelines": len(self.active_tasks),
-                    "pending_coin_pipelines": len(self.pending_contexts),
                     "max_concurrent_coins": self.config.max_concurrent_coins,
+                    "skipped_due_to_concurrency": self.metrics.skipped_due_to_concurrency,
                 },
             )
             self.emit_status_event(
-                "coin_queued_capacity",
+                "coin_skipped_capacity",
                 mint=mint,
                 active_coin_pipelines=len(self.active_tasks),
-                pending_coin_pipelines=len(self.pending_contexts),
                 max_concurrent_coins=self.config.max_concurrent_coins,
+                skipped_due_to_concurrency=self.metrics.skipped_due_to_concurrency,
             )
+            self.save_state()
             return
 
+        self.metrics.coins_started += 1
         self.start_coin_task(ctx)
 
     def start_coin_task(self, ctx: CoinContext) -> None:
@@ -1168,14 +1835,6 @@ class MemeCoinPipelineOrchestrator:
             pair_addresses=ctx.pair_addresses,
             active_coin_pipelines=len(self.active_tasks),
         )
-
-    def start_pending_tasks(self) -> None:
-        while self.pending_contexts and len(self.active_tasks) < self.config.max_concurrent_coins:
-            ctx = self.pending_contexts.popleft()
-            self.pending_mints.discard(ctx.mint)
-            if ctx.mint in self.active_tasks or ctx.mint in self.terminal_mints:
-                continue
-            self.start_coin_task(ctx)
 
     async def run_coin_pipeline_task(self, ctx: CoinContext) -> None:
         try:
@@ -1223,11 +1882,11 @@ class MemeCoinPipelineOrchestrator:
             )
         finally:
             self.active_tasks.pop(ctx.mint, None)
-            self.start_pending_tasks()
             self.save_state()
 
     async def run_coin_pipeline(self, ctx: CoinContext) -> None:
         await self.run_capture(ctx)
+        self.start_post_migration_dex_tracking(ctx)
         await self.run_risk_report(ctx)
         dex_result = await self.poll_dexscreener(ctx)
 
@@ -1264,6 +1923,174 @@ class MemeCoinPipelineOrchestrator:
         if enrichment_tasks:
             await asyncio.gather(*enrichment_tasks)
 
+    def start_post_migration_dex_tracking(self, ctx: CoinContext) -> None:
+        if (
+            self.config.max_post_migration_tracked_coins <= 0
+            or self.config.post_migration_dex_tracking_hours <= 0
+        ):
+            return
+
+        if ctx.mint in self.post_migration_dex_tracks:
+            return
+
+        active_tracks = self.active_post_migration_dex_tracks()
+        if len(active_tracks) >= self.config.max_post_migration_tracked_coins:
+            self.logger.warning(
+                "post_migration_dex_tracking_skipped_capacity",
+                extra={
+                    "event": "post_migration_dex_tracking_skipped_capacity",
+                    "coin": ctx.mint,
+                    "active_tracks": len(active_tracks),
+                    "max_tracks": self.config.max_post_migration_tracked_coins,
+                },
+            )
+            self.emit_status_event(
+                "post_migration_dex_tracking_skipped_capacity",
+                mint=ctx.mint,
+                active_tracks=len(active_tracks),
+                max_tracks=self.config.max_post_migration_tracked_coins,
+            )
+            return
+
+        now_epoch = time.time()
+        track = PostMigrationDexTrack(
+            mint=ctx.mint,
+            pair_addresses=ctx.pair_addresses,
+            started_at_epoch=now_epoch,
+            end_at_epoch=now_epoch + self.config.post_migration_dex_tracking_hours * 3600.0,
+            next_due_at_epoch=now_epoch,
+        )
+        self.post_migration_dex_tracks[ctx.mint] = track
+        self.save_state()
+        self.logger.info(
+            "post_migration_dex_tracking_started",
+            extra={
+                "event": "post_migration_dex_tracking_started",
+                "coin": ctx.mint,
+                "active_tracks": len(self.active_post_migration_dex_tracks()),
+                "max_tracks": self.config.max_post_migration_tracked_coins,
+                "tracking_hours": self.config.post_migration_dex_tracking_hours,
+                "out_root": str(self.config.post_migration_dex_out_root),
+            },
+        )
+        self.emit_status_event(
+            "post_migration_dex_tracking_started",
+            mint=ctx.mint,
+            active_tracks=len(self.active_post_migration_dex_tracks()),
+            max_tracks=self.config.max_post_migration_tracked_coins,
+            tracking_hours=self.config.post_migration_dex_tracking_hours,
+        )
+
+    def post_migration_dex_interval_seconds(self, active_count: int) -> float:
+        safe_rpm = max(1.0, self.config.post_migration_dex_requests_per_minute)
+        requests_per_round = max(1, self.config.post_migration_dex_requests_per_snapshot)
+        return max(1.0, 60.0 * max(1, active_count) * requests_per_round / safe_rpm)
+
+    def build_post_migration_dex_command(self, track: PostMigrationDexTrack) -> list[str]:
+        command = [
+            self.config.python_executable,
+            str(self.config.dexscreener_script_path),
+            "--token",
+            track.mint,
+            "--chain",
+            self.config.dexscreener_chain,
+            "--out",
+            str(self.config.post_migration_dex_out_root),
+            "--sleep",
+            str(self.config.post_migration_dex_request_sleep_seconds),
+            "--append-history",
+            "--quiet",
+            "--endpoint-profile",
+            self.config.post_migration_dex_endpoint_profile,
+        ]
+        if self.config.post_migration_dex_timestamped_raw:
+            command.append("--timestamped-raw")
+        return command
+
+    async def post_migration_dex_scheduler(self) -> None:
+        stage = "post_migration_dexscreener"
+        while not self.shutdown_event.is_set():
+            active_tracks = self.active_post_migration_dex_tracks()
+            if not active_tracks:
+                await asyncio.sleep(1.0)
+                continue
+
+            now_epoch = time.time()
+            due_tracks = [track for track in active_tracks if track.next_due_at_epoch <= now_epoch]
+            if not due_tracks:
+                next_due = min(track.next_due_at_epoch for track in active_tracks)
+                await asyncio.sleep(min(5.0, max(0.5, next_due - now_epoch)))
+                continue
+
+            track = min(due_tracks, key=lambda item: item.next_due_at_epoch)
+            command = self.build_post_migration_dex_command(track)
+            try:
+                await run_subprocess(
+                    command,
+                    logger=self.logger,
+                    mint=track.mint,
+                    stage=stage,
+                    timeout_seconds=self.config.dexscreener_subprocess_timeout_seconds,
+                    dry_run=self.config.dry_run,
+                    stage_log_path=self.stage_log_path(track.mint, stage),
+                )
+                track.samples += 1
+                track.last_sample_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                track.last_error = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                track.last_error = repr(exc)
+                self.logger.warning(
+                    "post_migration_dex_snapshot_failed",
+                    extra={
+                        "event": "post_migration_dex_snapshot_failed",
+                        "coin": track.mint,
+                        "error": repr(exc),
+                    },
+                )
+
+            active_count = len(self.active_post_migration_dex_tracks())
+            interval_seconds = self.post_migration_dex_interval_seconds(active_count)
+            track.next_due_at_epoch = time.time() + interval_seconds
+
+            if track.end_at_epoch <= time.time():
+                self.post_migration_dex_tracks.pop(track.mint, None)
+                self.logger.info(
+                    "post_migration_dex_tracking_completed",
+                    extra={
+                        "event": "post_migration_dex_tracking_completed",
+                        "coin": track.mint,
+                        "samples": track.samples,
+                    },
+                )
+                self.emit_status_event(
+                    "post_migration_dex_tracking_completed",
+                    mint=track.mint,
+                    samples=track.samples,
+                )
+            else:
+                self.logger.info(
+                    "post_migration_dex_snapshot",
+                    extra={
+                        "event": "post_migration_dex_snapshot",
+                        "coin": track.mint,
+                        "samples": track.samples,
+                        "active_tracks": active_count,
+                        "next_interval_seconds": round(interval_seconds, 3),
+                        "out_root": str(self.config.post_migration_dex_out_root),
+                    },
+                )
+                self.emit_status_event(
+                    "post_migration_dex_snapshot",
+                    mint=track.mint,
+                    samples=track.samples,
+                    active_tracks=active_count,
+                    next_interval_seconds=round(interval_seconds, 3),
+                )
+
+            self.save_state()
+
     async def run_capture(self, ctx: CoinContext) -> None:
         stage = "solana_1h_capture"
         self.current_stage[ctx.mint] = stage
@@ -1277,10 +2104,33 @@ class MemeCoinPipelineOrchestrator:
             str(self.config.capture_duration_seconds),
             "--out",
             str(self.config.capture_out_root),
+            "--network-sample-seconds",
+            str(self.config.capture_network_sample_seconds),
         ]
+        if self.config.capture_network_sample_fee_addresses:
+            default_command.append("--network-sample-fee-addresses")
+
+        network_sample_args = [
+            "--network-sample-seconds",
+            str(self.config.capture_network_sample_seconds),
+        ]
+        if self.config.capture_network_sample_fee_addresses:
+            network_sample_args.append("--network-sample-fee-addresses")
 
         pair_args: list[str] = []
-        for pair in ctx.pair_addresses:
+        valid_pair_addresses = tuple(pair for pair in ctx.pair_addresses if is_valid_solana_address(pair))
+        invalid_pair_addresses = tuple(pair for pair in ctx.pair_addresses if pair not in valid_pair_addresses)
+        if invalid_pair_addresses:
+            self.logger.info(
+                "capture_pair_addresses_filtered",
+                extra={
+                    "event": "capture_pair_addresses_filtered",
+                    "coin": ctx.mint,
+                    "invalid_pair_addresses": invalid_pair_addresses,
+                },
+            )
+
+        for pair in valid_pair_addresses:
             default_command.extend(["--pair", pair])
             pair_args.extend(["--pair", pair])
 
@@ -1293,8 +2143,9 @@ class MemeCoinPipelineOrchestrator:
                 "mint": ctx.mint,
                 "duration_seconds": self.config.capture_duration_seconds,
                 "capture_out_root": self.config.capture_out_root,
+                "network_sample_seconds": self.config.capture_network_sample_seconds,
             },
-            list_replacements={"pair_args": pair_args},
+            list_replacements={"pair_args": pair_args, "network_sample_args": network_sample_args},
         )
         command.extend(self.config.capture_extra_args)
 
@@ -1720,6 +2571,7 @@ class MemeCoinPipelineOrchestrator:
                 **self.metrics.to_dict(
                     active_count=len(self.active_tasks),
                     tracked_count=len(self.seen_mints),
+                    post_migration_dex_tracked_count=len(self.active_post_migration_dex_tracks()),
                 ),
                 "current_stage": dict(self.current_stage),
             }
@@ -1837,12 +2689,16 @@ def extract_social_url(features: Mapping[str, Any], platforms: set[str]) -> Opti
 # -----------------------------
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(config_defaults: Optional[Mapping[str, Any]] = None) -> argparse.ArgumentParser:
+    if config_defaults is None:
+        config_defaults = load_json_config_defaults(DEFAULT_ORCH_CONFIG_PATH)
+
     parser = argparse.ArgumentParser(
         description="Orchestrate PumpPortal migrated-coin acquisition pipeline.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
+    parser.add_argument("--config", type=Path, default=DEFAULT_ORCH_CONFIG_PATH, help="JSON config file for stable orchestrator defaults.")
     parser.add_argument("--pumpportal-jsonl", type=Path, default=default_pumpportal_jsonl())
 
     parser.add_argument("--pumpportal-script", type=Path, default=Path("pumpportal_ws.py"))
@@ -1858,6 +2714,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-pumpportal", action="store_true", help="Do not launch pumpportal_ws.py; only tail --pumpportal-jsonl.")
     parser.add_argument("--pumpportal-duration-seconds", type=int, default=0, help="PumpPortal stream duration; 0 means run indefinitely.")
     parser.add_argument("--pumpportal-display", choices=("metrics", "all", "bar"), default="bar")
+    parser.add_argument(
+        "--pumpportal-jsonl-wait-seconds",
+        type=float,
+        default=120.0,
+        help="Max seconds to wait for pumpportal_ws.py to create --pumpportal-jsonl after launch.",
+    )
 
     parser.add_argument("--max-concurrent-coins", type=int, default=2)
     parser.add_argument("--scan-poll-seconds", type=float, default=2.0)
@@ -1872,8 +2734,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stage-log-root", type=Path, default=Path("data/raw/orchestrator/stage_logs"))
     parser.add_argument("--no-stage-log-files", action="store_true", help="Disable per-coin per-stage subprocess log files.")
 
-    parser.add_argument("--pumpportal-command-template", default=None, help="Optional shell-style argv template. Placeholders: {python} {script} {duration_seconds} {display}.")
-    parser.add_argument("--capture-command-template", default=None, help="Optional shell-style argv template. Placeholders: {python} {script} {mint} {duration_seconds} {capture_out_root} {pair_args}.")
+    parser.add_argument(
+        "--pumpportal-command-template",
+        default=None,
+        help=(
+            "Optional shell-style argv template. Placeholders: "
+            "{python} {script} {duration_seconds} {display} {raw_jsonl}."
+        ),
+    )
+    parser.add_argument("--capture-command-template", default=None, help="Optional shell-style argv template. Placeholders: {python} {script} {mint} {duration_seconds} {capture_out_root} {pair_args} {network_sample_args}.")
     parser.add_argument("--risk-command-template", default=None, help="Optional shell-style argv template. Placeholders: {python} {script} {mint} {risk_analysis_root} {risk_export_path} {risk_http_timeout_seconds}.")
     parser.add_argument("--dexscreener-command-template", default=None, help="Optional shell-style argv template. Placeholders: {python} {script} {mint} {chain} {dexscreener_out_root} {dexscreener_script_sleep_seconds}.")
     parser.add_argument("--website-command-template", default=None, help="Optional shell-style argv template. Placeholders: {python} {script} {mint} {website_url} {metadata_json} {website_output_root} {telegram_url} {x_url}.")
@@ -1882,6 +2751,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--capture-duration-seconds", type=int, default=3600)
     parser.add_argument("--capture-timeout-grace-seconds", type=int, default=900)
     parser.add_argument("--capture-out-root", type=Path, default=Path("data/raw/onchain"))
+    parser.add_argument("--capture-network-sample-seconds", type=float, default=60.0, help="Sparse Helius congestion/fee sampling interval passed to solana_coin_1h_capture.py. Use 0 to disable.")
+    parser.add_argument("--capture-network-sample-fee-addresses", action="store_true", help="Sample prioritization fees for watched addresses instead of global fee pressure.")
     parser.add_argument("--require-pair-for-capture", action="store_true")
 
     parser.add_argument("--risk-analysis-root", type=Path, default=Path("data/raw/analytics"))
@@ -1897,6 +2768,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dexscreener-max-attempts", type=int, default=30)
     parser.add_argument("--dexscreener-script-sleep-seconds", type=float, default=1.1)
     parser.add_argument("--dexscreener-subprocess-timeout-seconds", type=int, default=180)
+    parser.add_argument("--max-post-migration-tracked-coins", type=int, default=6, help="Maximum coins tracked by the cheap post-Helius DexScreener label sampler. Use 0 to disable.")
+    parser.add_argument("--post-migration-dex-tracking-hours", type=float, default=24.0, help="How long to keep sampling DexScreener after Helius capture stops.")
+    parser.add_argument("--post-migration-dex-requests-per-minute", type=float, default=50.0, help="Safe global DexScreener request budget for post-Helius label tracking.")
+    parser.add_argument("--post-migration-dex-requests-per-snapshot", type=int, default=1, help="Requests consumed by each post-migration Dex snapshot. Market profile uses 1.")
+    parser.add_argument("--post-migration-dex-endpoint-profile", choices=("market", "full"), default="market", help="market uses only token-pairs for cheap labels; full uses every enrichment endpoint.")
+    parser.add_argument("--post-migration-dex-request-sleep-seconds", type=float, default=0.0, help="Per-request sleep inside dexscreener_api.py for post-migration snapshots. Keep 0 because orchestrator rate-limits globally.")
+    parser.add_argument("--post-migration-dex-out-root", type=Path, default=Path("data/raw/onchain"))
+    parser.add_argument("--no-post-migration-dex-raw-history", action="store_true", help="Do not save timestamped raw DexScreener endpoint responses for the post-migration sampler.")
 
     parser.add_argument("--website-output-root", type=Path, default=Path("data/raw/analytics"))
     parser.add_argument("--website-subprocess-timeout-seconds", type=int, default=900)
@@ -1910,14 +2789,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--website-extra-arg", action="append", default=[])
     parser.add_argument("--telegram-extra-arg", action="append", default=[])
 
+    parser.add_argument("--console-format", default="pretty", choices=["pretty", "json"])
+    parser.add_argument(
+        "--console-display",
+        default="dashboard",
+        choices=["dashboard", "verbose"],
+        help="pretty console only: dashboard keeps 2 in-place lines; verbose prints every event.",
+    )
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
+    path_keys = {
+        "config",
+        "pumpportal_jsonl",
+        "pumpportal_script",
+        "capture_script",
+        "risk_report_script",
+        "dexscreener_script",
+        "website_grader_script",
+        "telegram_info_script",
+        "state_path",
+        "status_jsonl_path",
+        "stage_log_root",
+        "capture_out_root",
+        "risk_analysis_root",
+        "risk_export_root",
+        "dexscreener_out_root",
+        "post_migration_dex_out_root",
+        "website_output_root",
+    }
+    parser.set_defaults(**coerce_argparse_defaults(config_defaults, path_keys))
     return parser
 
 
 def config_from_args(args: argparse.Namespace) -> OrchestratorConfig:
-    if args.max_concurrent_coins != 2:
-        raise ValueError("Requirement is a hard cap of 2 concurrent coins; keep --max-concurrent-coins=2.")
+    post_dex_requests_per_snapshot = args.post_migration_dex_requests_per_snapshot
+    if args.post_migration_dex_endpoint_profile == "full" and post_dex_requests_per_snapshot == 1:
+        post_dex_requests_per_snapshot = 8
 
     return OrchestratorConfig(
         pumpportal_jsonl_path=args.pumpportal_jsonl,
@@ -1932,6 +2839,7 @@ def config_from_args(args: argparse.Namespace) -> OrchestratorConfig:
         run_pumpportal=not args.no_pumpportal,
         pumpportal_duration_seconds=args.pumpportal_duration_seconds,
         pumpportal_display=args.pumpportal_display,
+        pumpportal_jsonl_wait_seconds=args.pumpportal_jsonl_wait_seconds,
         max_concurrent_coins=args.max_concurrent_coins,
         scan_poll_seconds=args.scan_poll_seconds,
         metrics_log_seconds=args.metrics_log_seconds,
@@ -1951,6 +2859,8 @@ def config_from_args(args: argparse.Namespace) -> OrchestratorConfig:
         capture_duration_seconds=args.capture_duration_seconds,
         capture_timeout_grace_seconds=args.capture_timeout_grace_seconds,
         capture_out_root=args.capture_out_root,
+        capture_network_sample_seconds=args.capture_network_sample_seconds,
+        capture_network_sample_fee_addresses=args.capture_network_sample_fee_addresses,
         require_pair_for_capture=args.require_pair_for_capture,
         risk_analysis_root=args.risk_analysis_root,
         risk_export_root=args.risk_export_root,
@@ -1964,6 +2874,14 @@ def config_from_args(args: argparse.Namespace) -> OrchestratorConfig:
         dexscreener_max_attempts=args.dexscreener_max_attempts,
         dexscreener_script_sleep_seconds=args.dexscreener_script_sleep_seconds,
         dexscreener_subprocess_timeout_seconds=args.dexscreener_subprocess_timeout_seconds,
+        max_post_migration_tracked_coins=args.max_post_migration_tracked_coins,
+        post_migration_dex_tracking_hours=args.post_migration_dex_tracking_hours,
+        post_migration_dex_requests_per_minute=args.post_migration_dex_requests_per_minute,
+        post_migration_dex_requests_per_snapshot=post_dex_requests_per_snapshot,
+        post_migration_dex_endpoint_profile=args.post_migration_dex_endpoint_profile,
+        post_migration_dex_request_sleep_seconds=args.post_migration_dex_request_sleep_seconds,
+        post_migration_dex_out_root=args.post_migration_dex_out_root,
+        post_migration_dex_timestamped_raw=not args.no_post_migration_dex_raw_history,
         website_output_root=args.website_output_root,
         website_subprocess_timeout_seconds=args.website_subprocess_timeout_seconds,
         telegram_subprocess_timeout_seconds=args.telegram_subprocess_timeout_seconds,
@@ -1978,9 +2896,16 @@ def config_from_args(args: argparse.Namespace) -> OrchestratorConfig:
 
 
 async def async_main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = build_parser()
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=Path, default=DEFAULT_ORCH_CONFIG_PATH)
+    config_args, _ = config_parser.parse_known_args(argv)
+    parser = build_parser(load_json_config_defaults(config_args.config))
     args = parser.parse_args(argv)
-    logger = setup_logging(args.log_level)
+    logger = setup_logging(
+        args.log_level,
+        console_format=args.console_format,
+        console_display=args.console_display,
+    )
 
     try:
         config = config_from_args(args)

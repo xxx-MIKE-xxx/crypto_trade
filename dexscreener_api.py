@@ -46,6 +46,17 @@ import requests
 BASE = "https://api.dexscreener.com"
 CHAIN = "solana"
 DEFAULT_TOKEN = "33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump"
+FULL_ENDPOINT_NAMES = (
+    "token_pairs",
+    "tokens",
+    "orders",
+    "token_boosts_latest",
+    "token_boosts_top",
+    "ads_latest",
+    "community_takeovers_latest",
+    "token_profiles_latest",
+)
+MARKET_ENDPOINT_NAMES = ("token_pairs",)
 
 
 def now_utc() -> datetime:
@@ -59,6 +70,13 @@ def now_ms() -> int:
 def save_json(path: Path, obj: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2, sort_keys=True, default=str), encoding="utf-8")
+
+
+def append_jsonl(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(obj, sort_keys=True, default=str, separators=(",", ":")))
+        f.write("\n")
 
 
 def build_output_dir(base_out: str | Path, token: str) -> Path:
@@ -146,7 +164,7 @@ def item_token_matches(item: Any, token: str, chain: str = CHAIN) -> bool:
     return token_ok and chain_ok
 
 
-def extract_pairs(resp: Dict[str, Any], token: str) -> List[Dict[str, Any]]:
+def extract_pairs(resp: Dict[str, Any], token: str, chain: str = CHAIN) -> List[Dict[str, Any]]:
     pairs = body_list(resp)
     out = []
     for p in pairs:
@@ -154,7 +172,7 @@ def extract_pairs(resp: Dict[str, Any], token: str) -> List[Dict[str, Any]]:
             continue
         base = lower((p.get("baseToken") or {}).get("address") if isinstance(p.get("baseToken"), dict) else None)
         quote = lower((p.get("quoteToken") or {}).get("address") if isinstance(p.get("quoteToken"), dict) else None)
-        if lower(p.get("chainId")) == CHAIN and (base == lower(token) or quote == lower(token)):
+        if lower(p.get("chainId")) == lower(chain) and (base == lower(token) or quote == lower(token)):
             out.append(p)
     return out
 
@@ -183,6 +201,87 @@ def extract_links_from_pairs(pairs: List[Dict[str, Any]]) -> Dict[str, Any]:
         "has_website": len(websites) > 0,
         "has_telegram": any("telegram" in p or p == "tg" for p in platforms),
         "has_x": any(p in ("twitter", "x") or "twitter" in p for p in platforms),
+    }
+
+
+def extract_market_features(pairs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def as_float(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+    compact_pairs = []
+    for pair in pairs:
+        liquidity = pair.get("liquidity") if isinstance(pair.get("liquidity"), dict) else {}
+        compact_pairs.append({
+            "chainId": pair.get("chainId"),
+            "dexId": pair.get("dexId"),
+            "pairAddress": pair.get("pairAddress"),
+            "url": pair.get("url"),
+            "baseToken": pair.get("baseToken"),
+            "quoteToken": pair.get("quoteToken"),
+            "priceNative": pair.get("priceNative"),
+            "priceUsd": pair.get("priceUsd"),
+            "liquidity": pair.get("liquidity"),
+            "volume": pair.get("volume"),
+            "txns": pair.get("txns"),
+            "priceChange": pair.get("priceChange"),
+            "fdv": pair.get("fdv"),
+            "marketCap": pair.get("marketCap"),
+            "pairCreatedAt": pair.get("pairCreatedAt"),
+            "labels": pair.get("labels"),
+        })
+
+    def liquidity_usd(pair: Dict[str, Any]) -> float:
+        liquidity = pair.get("liquidity") if isinstance(pair.get("liquidity"), dict) else {}
+        return as_float(liquidity.get("usd")) or 0.0
+
+    primary_pair = max(pairs, key=liquidity_usd) if pairs else {}
+    liquidity = primary_pair.get("liquidity") if isinstance(primary_pair.get("liquidity"), dict) else {}
+    volume = primary_pair.get("volume") if isinstance(primary_pair.get("volume"), dict) else {}
+    txns = primary_pair.get("txns") if isinstance(primary_pair.get("txns"), dict) else {}
+    price_change = primary_pair.get("priceChange") if isinstance(primary_pair.get("priceChange"), dict) else {}
+
+    def tx_count(window: str, side: str) -> Optional[int]:
+        bucket = txns.get(window) if isinstance(txns.get(window), dict) else {}
+        value = bucket.get(side)
+        try:
+            return int(value) if value is not None else None
+        except Exception:
+            return None
+
+    return {
+        "primary_pair_address": primary_pair.get("pairAddress"),
+        "primary_dex_id": primary_pair.get("dexId"),
+        "primary_pair_url": primary_pair.get("url"),
+        "price_native": as_float(primary_pair.get("priceNative")),
+        "price_usd": as_float(primary_pair.get("priceUsd")),
+        "liquidity_usd": as_float(liquidity.get("usd")),
+        "liquidity_base": as_float(liquidity.get("base")),
+        "liquidity_quote": as_float(liquidity.get("quote")),
+        "volume_m5": as_float(volume.get("m5")),
+        "volume_h1": as_float(volume.get("h1")),
+        "volume_h6": as_float(volume.get("h6")),
+        "volume_h24": as_float(volume.get("h24")),
+        "price_change_m5": as_float(price_change.get("m5")),
+        "price_change_h1": as_float(price_change.get("h1")),
+        "price_change_h6": as_float(price_change.get("h6")),
+        "price_change_h24": as_float(price_change.get("h24")),
+        "txns_m5_buys": tx_count("m5", "buys"),
+        "txns_m5_sells": tx_count("m5", "sells"),
+        "txns_h1_buys": tx_count("h1", "buys"),
+        "txns_h1_sells": tx_count("h1", "sells"),
+        "txns_h6_buys": tx_count("h6", "buys"),
+        "txns_h6_sells": tx_count("h6", "sells"),
+        "txns_h24_buys": tx_count("h24", "buys"),
+        "txns_h24_sells": tx_count("h24", "sells"),
+        "fdv": as_float(primary_pair.get("fdv")),
+        "market_cap": as_float(primary_pair.get("marketCap")),
+        "pair_created_at": primary_pair.get("pairCreatedAt"),
+        "pairs_compact": compact_pairs,
     }
 
 
@@ -242,6 +341,17 @@ def extract_orders_features(resp: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def empty_orders_features() -> Dict[str, Any]:
+    return {
+        "paid_order_count": 0,
+        "latest_payment_age_seconds": None,
+        "has_profile_from_orders": False,
+        "has_active_ad_from_orders": False,
+        "community_takeover_from_orders": False,
+        "orders_compact": [],
+    }
+
+
 def extract_boost_features(latest_resp: Dict[str, Any], top_resp: Dict[str, Any], pairs: List[Dict[str, Any]], token: str) -> Dict[str, Any]:
     matched_boosts = []
 
@@ -292,6 +402,16 @@ def extract_boost_features(latest_resp: Dict[str, Any], top_resp: Dict[str, Any]
     }
 
 
+def empty_boost_features() -> Dict[str, Any]:
+    return {
+        "boost_amount_now": None,
+        "boost_total_amount": None,
+        "boosts_matched_count": 0,
+        "pair_boosts_active_max": None,
+        "boosts_compact": [],
+    }
+
+
 def extract_ads_features(resp: Dict[str, Any], token: str) -> Dict[str, Any]:
     ads = []
     for item in body_list(resp):
@@ -339,6 +459,16 @@ def extract_ads_features(resp: Dict[str, Any], token: str) -> Dict[str, Any]:
     }
 
 
+def empty_ads_features() -> Dict[str, Any]:
+    return {
+        "has_active_ad_from_ads_feed": False,
+        "ad_impressions": None,
+        "ad_duration_hours": None,
+        "ads_matched_count": 0,
+        "ads_compact": [],
+    }
+
+
 def extract_community_takeover_features(resp: Dict[str, Any], token: str) -> Dict[str, Any]:
     matches = [x for x in body_list(resp) if item_token_matches(x, token)]
     return {
@@ -357,22 +487,32 @@ def extract_community_takeover_features(resp: Dict[str, Any], token: str) -> Dic
     }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--token", default=DEFAULT_TOKEN)
-    parser.add_argument("--chain", default=CHAIN)
-    parser.add_argument("--out", default="./data/raw/analytics")
-    parser.add_argument("--sleep", type=float, default=1.1, help="Safe delay; 60 rpm endpoints need >=1.0 sec.")
-    parser.add_argument("--debug", action="store_true")
-    args = parser.parse_args()
+def empty_community_takeover_features() -> Dict[str, Any]:
+    return {
+        "community_takeover_from_feed": False,
+        "community_takeover_matches_count": 0,
+        "community_takeover_compact": [],
+    }
 
-    token = args.token
-    chain = args.chain
-    out_dir = build_output_dir(args.out, token)
-    raw_dir = out_dir / "raw"
+
+def collect_dexscreener_snapshot(
+    *,
+    token: str,
+    chain: str,
+    out: str | Path,
+    sleep_s: float,
+    debug: bool = False,
+    quiet: bool = False,
+    append_history: bool = False,
+    timestamped_raw: bool = False,
+    endpoint_profile: str = "full",
+) -> Dict[str, Any]:
+    snapshot_id = now_utc().strftime("%Y%m%dT%H%M%S.%fZ")
+    out_dir = build_output_dir(out, token)
+    raw_dir = out_dir / "raw" / snapshot_id if timestamped_raw else out_dir / "raw"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    endpoints = {
+    all_endpoints = {
         "token_pairs": f"{BASE}/token-pairs/v1/{chain}/{token}",
         "tokens": f"{BASE}/tokens/v1/{chain}/{token}",
         "orders": f"{BASE}/orders/v1/{chain}/{token}",
@@ -382,27 +522,46 @@ def main() -> int:
         "community_takeovers_latest": f"{BASE}/community-takeovers/latest/v1",
         "token_profiles_latest": f"{BASE}/token-profiles/latest/v1",
     }
+    endpoint_names = MARKET_ENDPOINT_NAMES if endpoint_profile == "market" else FULL_ENDPOINT_NAMES
+    endpoints = {name: all_endpoints[name] for name in endpoint_names}
 
     raw: Dict[str, Dict[str, Any]] = {}
     for name, url in endpoints.items():
-        print(f"[fetch] {name}")
-        resp = request_json(url, sleep_s=args.sleep, debug=args.debug)
+        if not quiet:
+            print(f"[fetch] {name}")
+        resp = request_json(url, sleep_s=sleep_s, debug=debug)
         raw[name] = resp
         save_json(raw_dir / f"{name}.json", resp)
 
-    pairs = extract_pairs(raw["token_pairs"], token)
+    pairs = extract_pairs(raw["token_pairs"], token, chain)
     links = extract_links_from_pairs(pairs)
-    orders_features = extract_orders_features(raw["orders"])
-    boosts_features = extract_boost_features(raw["token_boosts_latest"], raw["token_boosts_top"], pairs, token)
-    ads_features = extract_ads_features(raw["ads_latest"], token)
-    cto_features = extract_community_takeover_features(raw["community_takeovers_latest"], token)
+    market_features = extract_market_features(pairs)
+    orders_features = extract_orders_features(raw["orders"]) if "orders" in raw else empty_orders_features()
+    boosts_features = (
+        extract_boost_features(raw["token_boosts_latest"], raw["token_boosts_top"], pairs, token)
+        if "token_boosts_latest" in raw and "token_boosts_top" in raw
+        else empty_boost_features()
+    )
+    ads_features = extract_ads_features(raw["ads_latest"], token) if "ads_latest" in raw else empty_ads_features()
+    cto_features = (
+        extract_community_takeover_features(raw["community_takeovers_latest"], token)
+        if "community_takeovers_latest" in raw
+        else empty_community_takeover_features()
+    )
 
     # Extra: global token profiles feed can prove profile existence only if token is currently in latest feed.
-    token_profile_feed_matches = [x for x in body_list(raw["token_profiles_latest"]) if item_token_matches(x, token)]
+    token_profile_feed_matches = (
+        [x for x in body_list(raw["token_profiles_latest"]) if item_token_matches(x, token)]
+        if "token_profiles_latest" in raw
+        else []
+    )
 
     features = {
         "token": token,
         "chain": chain,
+        "snapshot_id": snapshot_id,
+        "endpoint_profile": endpoint_profile,
+        "request_count": len(endpoints),
         "generated_at": now_utc().isoformat(),
         "endpoint_status": {
             name: {
@@ -431,6 +590,7 @@ def main() -> int:
 
         # Useful debug/support fields:
         "pair_count": len(pairs),
+        **market_features,
         "websites": links["websites"],
         "socials": links["socials"],
         "orders_compact": orders_features["orders_compact"],
@@ -442,6 +602,8 @@ def main() -> int:
     }
 
     save_json(out_dir / "features.json", features)
+    if append_history:
+        append_jsonl(out_dir / "features_history.jsonl", features)
 
     summary_lines = [
         f"Token: {token}",
@@ -466,7 +628,35 @@ def main() -> int:
     ]
     (out_dir / "summary.txt").write_text("\n".join(summary_lines), encoding="utf-8")
 
-    print("\n".join(summary_lines))
+    if not quiet:
+        print("\n".join(summary_lines))
+    return features
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--token", default=DEFAULT_TOKEN)
+    parser.add_argument("--chain", default=CHAIN)
+    parser.add_argument("--out", default="./data/raw/analytics")
+    parser.add_argument("--sleep", type=float, default=1.1, help="Safe delay; 60 rpm endpoints need >=1.0 sec.")
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--append-history", action="store_true", help="Append every feature snapshot to features_history.jsonl.")
+    parser.add_argument("--timestamped-raw", action="store_true", help="Save raw endpoint responses under raw/<snapshot_id>/ instead of overwriting raw/*.json.")
+    parser.add_argument("--endpoint-profile", choices=("full", "market"), default="full", help="full fetches all enrichment endpoints; market fetches only token-pairs for cheap label snapshots.")
+    args = parser.parse_args()
+
+    collect_dexscreener_snapshot(
+        token=args.token,
+        chain=args.chain,
+        out=args.out,
+        sleep_s=args.sleep,
+        debug=args.debug,
+        quiet=args.quiet,
+        append_history=args.append_history,
+        timestamped_raw=args.timestamped_raw,
+        endpoint_profile=args.endpoint_profile,
+    )
     return 0
 
 

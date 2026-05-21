@@ -193,3 +193,75 @@ def test_features_json_format(tmp_path):
     assert isinstance(saved["has_x"], bool)
     assert isinstance(saved["has_active_ad"], bool)
     assert isinstance(saved["community_takeover_flag"], bool)
+
+
+def test_extract_market_features_prefers_highest_liquidity_pair():
+    pairs = [
+        {
+            "dexId": "lowdex",
+            "pairAddress": "LowPair",
+            "priceUsd": "0.01",
+            "liquidity": {"usd": 100},
+        },
+        {
+            "dexId": "highdex",
+            "pairAddress": "HighPair",
+            "priceUsd": "0.05",
+            "liquidity": {"usd": 5000, "base": 10, "quote": 250},
+            "volume": {"m5": 1, "h1": 2, "h6": 3, "h24": 4},
+            "txns": {"h24": {"buys": 7, "sells": 5}},
+            "priceChange": {"h24": 42},
+            "fdv": 12345,
+            "marketCap": 12000,
+        },
+    ]
+
+    features = dexscreener_api.extract_market_features(pairs)
+
+    assert features["primary_pair_address"] == "HighPair"
+    assert features["primary_dex_id"] == "highdex"
+    assert features["price_usd"] == 0.05
+    assert features["liquidity_usd"] == 5000
+    assert features["volume_h24"] == 4
+    assert features["txns_h24_buys"] == 7
+    assert features["price_change_h24"] == 42
+    assert len(features["pairs_compact"]) == 2
+
+
+def test_collect_snapshot_appends_history_and_timestamped_raw(tmp_path, monkeypatch):
+    def fake_request_json(url, sleep_s, debug):
+        if "token-pairs" in url:
+            body = [
+                {
+                    "chainId": "solana",
+                    "pairAddress": "Pair111",
+                    "baseToken": {"address": MINT_ADDRESS},
+                    "quoteToken": {"address": "So11111111111111111111111111111111111111112"},
+                    "priceUsd": "0.25",
+                    "liquidity": {"usd": 1000},
+                }
+            ]
+        else:
+            body = []
+        return {"url": url, "status_code": 200, "elapsed_seconds": 0.0, "headers": {}, "body": body}
+
+    monkeypatch.setattr(dexscreener_api, "request_json", fake_request_json)
+
+    features = dexscreener_api.collect_dexscreener_snapshot(
+        token=MINT_ADDRESS,
+        chain="solana",
+        out=tmp_path,
+        sleep_s=0,
+        quiet=True,
+        append_history=True,
+        timestamped_raw=True,
+        endpoint_profile="market",
+    )
+
+    out_dir = tmp_path / MINT_ADDRESS / "dexscreener"
+    assert features["price_usd"] == 0.25
+    assert features["endpoint_profile"] == "market"
+    assert features["request_count"] == 1
+    assert (out_dir / "features.json").exists()
+    assert (out_dir / "features_history.jsonl").exists()
+    assert list((out_dir / "raw").glob("*/token_pairs.json"))

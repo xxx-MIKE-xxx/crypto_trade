@@ -100,6 +100,10 @@ HELIUS_WS_TEMPLATE = "wss://mainnet.helius-rpc.com/?api-key={api_key}"
 
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
+
+BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+DEFAULT_CAPTURE_CONFIG_PATH = Path("config/solana_coin_1h_capture.json")
 
 
 _ENV_LINE_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$")
@@ -159,6 +163,15 @@ def load_env_file(path: Path, override: bool = False) -> Dict[str, str]:
     return parsed
 
 
+def load_json_config_defaults(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Config file must contain a JSON object: {path}")
+    return data
+
+
 def now_ts() -> float:
     return time.time()
 
@@ -171,6 +184,40 @@ def ts_iso(ts: Optional[int]) -> Optional[str]:
     if ts is None:
         return None
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+def parse_iso_ts(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    try:
+        text = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(text).timestamp()
+    except Exception:
+        return None
+
+
+def b58decode(value: str) -> bytes:
+    num = 0
+    for char in value:
+        num *= 58
+        idx = BASE58_ALPHABET.find(char)
+        if idx < 0:
+            raise ValueError("invalid base58 character")
+        num += idx
+
+    raw = num.to_bytes((num.bit_length() + 7) // 8, "big") if num else b""
+    pad = len(value) - len(value.lstrip("1"))
+    return b"\x00" * pad + raw
+
+
+def is_valid_solana_address(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    try:
+        return len(b58decode(text)) == 32
+    except Exception:
+        return False
 
 
 def format_duration(seconds: float) -> str:
@@ -582,6 +629,146 @@ def rpc_get_multiple_accounts(pool: RpcPool, addresses: List[str]) -> Tuple[RpcR
     )
 
 
+def rpc_get_recent_performance_samples(pool: RpcPool, limit: int) -> Tuple[RpcResult, str]:
+    return pool.call_any("getRecentPerformanceSamples", [limit])
+
+
+def rpc_get_recent_prioritization_fees(pool: RpcPool, addresses: List[str]) -> Tuple[RpcResult, str]:
+    params: List[Any] = [addresses] if addresses else []
+    return pool.call_any("getRecentPrioritizationFees", params)
+
+
+def extract_account_keys_with_programs(tx: Any) -> List[str]:
+    if not isinstance(tx, dict):
+        return []
+    return get_account_keys(tx)
+
+
+def iter_instructions(tx: Any) -> Iterable[Dict[str, Any]]:
+    if not isinstance(tx, dict):
+        return
+
+    msg = (((tx.get("transaction") or {}).get("message")) or {})
+    for ix in msg.get("instructions") or []:
+        if isinstance(ix, dict):
+            yield ix
+
+    meta = tx.get("meta") or {}
+    for group in meta.get("innerInstructions") or []:
+        for ix in group.get("instructions") or []:
+            if isinstance(ix, dict):
+                yield ix
+
+
+def extract_compute_budget_features(tx: Any) -> Dict[str, Any]:
+    features = {
+        "compute_unit_limit": None,
+        "compute_unit_price_micro_lamports": None,
+        "compute_units_consumed": None,
+        "priority_fee_lamports_est": None,
+    }
+
+    if not isinstance(tx, dict):
+        return features
+
+    meta = tx.get("meta") or {}
+    if meta.get("computeUnitsConsumed") is not None:
+        try:
+            features["compute_units_consumed"] = int(meta.get("computeUnitsConsumed"))
+        except Exception:
+            pass
+
+    for ix in iter_instructions(tx):
+        program_id = str(ix.get("programId") or "")
+        parsed = ix.get("parsed") if isinstance(ix.get("parsed"), dict) else {}
+        ix_type = str(parsed.get("type") or ix.get("type") or "").lower()
+        info = parsed.get("info") if isinstance(parsed.get("info"), dict) else {}
+
+        if program_id != COMPUTE_BUDGET_PROGRAM_ID and str(ix.get("program", "")).lower() != "compute-budget":
+            continue
+
+        if ix_type in {"setcomputeunitlimit", "set_compute_unit_limit"}:
+            units = info.get("units") or info.get("computeUnitLimit")
+            try:
+                features["compute_unit_limit"] = int(units)
+            except Exception:
+                pass
+            continue
+
+        if ix_type in {"setcomputeunitprice", "set_compute_unit_price"}:
+            price = info.get("microLamports") or info.get("micro_lamports")
+            try:
+                features["compute_unit_price_micro_lamports"] = int(price)
+            except Exception:
+                pass
+            continue
+
+        data = ix.get("data")
+        if isinstance(data, str):
+            try:
+                raw = b58decode(data)
+            except Exception:
+                raw = b""
+            if len(raw) >= 5 and raw[0] == 2:
+                features["compute_unit_limit"] = int.from_bytes(raw[1:5], "little")
+            elif len(raw) >= 9 and raw[0] == 3:
+                features["compute_unit_price_micro_lamports"] = int.from_bytes(raw[1:9], "little")
+
+    price = features["compute_unit_price_micro_lamports"]
+    units = features["compute_units_consumed"] or features["compute_unit_limit"]
+    if price is not None and units is not None:
+        features["priority_fee_lamports_est"] = int((int(price) * int(units)) / 1_000_000)
+
+    return features
+
+
+def classify_pool_events(tx: Any, target_mint: str, quote_mints: Set[str]) -> Dict[str, Any]:
+    labels: Set[str] = set()
+    evidence: List[str] = []
+
+    if not isinstance(tx, dict):
+        return {"labels": [], "primary": None, "confidence": 0.0, "evidence": []}
+
+    logs = " ".join(str(x).lower() for x in ((tx.get("meta") or {}).get("logMessages") or []))
+    instruction_text = []
+    for ix in iter_instructions(tx):
+        parsed = ix.get("parsed") if isinstance(ix.get("parsed"), dict) else {}
+        instruction_text.append(str(parsed.get("type") or ix.get("type") or ix.get("program") or "").lower())
+    text = logs + " " + " ".join(instruction_text)
+
+    checks = [
+        ("pool_init", ("initializepool", "initialize_pool", "create pool", "initialize2", "create_pool")),
+        ("add_liquidity", ("addliquidity", "add_liquidity", "deposit", "increase liquidity")),
+        ("remove_liquidity", ("removeliquidity", "remove_liquidity", "withdraw", "decrease liquidity")),
+        ("lp_mint", ("mintto", "mint_to", "mint lp")),
+        ("lp_burn", ("burn", "burn lp")),
+        ("swap", ("swap",)),
+    ]
+    for label, needles in checks:
+        if any(needle in text for needle in needles):
+            labels.add(label)
+            evidence.append(label)
+
+    meta = tx.get("meta") or {}
+    rows = (meta.get("preTokenBalances") or []) + (meta.get("postTokenBalances") or [])
+    touched_mints = {row.get("mint") for row in rows if isinstance(row, dict)}
+    if target_mint in touched_mints and any(mint in touched_mints for mint in quote_mints):
+        if not labels:
+            labels.add("token_pair_activity")
+        evidence.append("target_and_quote_balance_change")
+
+    priority = ["pool_init", "add_liquidity", "remove_liquidity", "lp_mint", "lp_burn", "swap", "token_pair_activity"]
+    primary = next((label for label in priority if label in labels), None)
+    confidence = 0.85 if labels & {"pool_init", "add_liquidity", "remove_liquidity", "swap"} else (0.55 if labels else 0.0)
+
+    return {
+        "labels": sorted(labels),
+        "primary": primary,
+        "confidence": confidence,
+        "evidence": sorted(set(evidence)),
+    }
+
+
 def summarize_tx_for_mint(
     signature: str,
     tx: Any,
@@ -589,21 +776,36 @@ def summarize_tx_for_mint(
     seen_by: Iterable[str],
     rpc_name: str,
     attempt: int,
+    fetched_at: str,
+    first_seen_at: Optional[str],
+    first_seen_source: Optional[str],
+    quote_mints: Set[str],
 ) -> Dict[str, Any]:
+    compute_features = extract_compute_budget_features(tx)
+    pool_features = classify_pool_events(tx, mint, quote_mints)
     base = {
-        "fetched_at": now_iso(),
+        "fetched_at": fetched_at,
+        "first_seen_at": first_seen_at,
+        "first_seen_source": first_seen_source,
         "signature": signature,
         "attempt": attempt,
         "rpc": rpc_name,
         "slot": None,
         "block_time": None,
         "iso_time": None,
+        "discovery_latency_seconds": None,
+        "fetch_lag_seconds": None,
         "err": None,
         "seen_by": ",".join(sorted(set(seen_by))),
         "mentions_mint_in_balances": False,
         "mint_accounts_changed": 0,
         "mint_balance_delta_sum": None,
         "fee_lamports": None,
+        **compute_features,
+        "pool_event_primary": pool_features["primary"],
+        "pool_event_labels": ",".join(pool_features["labels"]),
+        "pool_event_confidence": pool_features["confidence"],
+        "pool_event_evidence": ",".join(pool_features["evidence"]),
         "has_inner_instructions": False,
         "log_count": 0,
     }
@@ -650,10 +852,27 @@ def summarize_tx_for_mint(
 
     err = meta.get("err")
 
+    block_time = tx.get("blockTime")
+    first_seen_ts = parse_iso_ts(first_seen_at)
+    fetched_ts = parse_iso_ts(fetched_at)
+    discovery_latency = None
+    fetch_lag = None
+    if block_time is not None:
+        try:
+            block_ts = float(block_time)
+            if first_seen_ts is not None:
+                discovery_latency = round(first_seen_ts - block_ts, 3)
+            if fetched_ts is not None:
+                fetch_lag = round(fetched_ts - block_ts, 3)
+        except Exception:
+            pass
+
     base.update({
         "slot": tx.get("slot"),
-        "block_time": tx.get("blockTime"),
-        "iso_time": ts_iso(tx.get("blockTime")),
+        "block_time": block_time,
+        "iso_time": ts_iso(block_time),
+        "discovery_latency_seconds": discovery_latency,
+        "fetch_lag_seconds": fetch_lag,
         "err": json.dumps(err) if err else None,
         "mentions_mint_in_balances": bool(keys),
         "mint_accounts_changed": len(keys),
@@ -728,6 +947,8 @@ class Capture:
         backfill_limit: int,
         snapshot_seconds: float,
         poll_seconds_connected: float,
+        network_sample_seconds: float,
+        network_sample_fee_addresses: bool,
         max_queue_size: int,
         display_seconds: float,
         enable_account_notifications: bool,
@@ -748,6 +969,8 @@ class Capture:
         self.poll_seconds_connected = poll_seconds_connected
         self.backfill_limit = backfill_limit
         self.snapshot_seconds = snapshot_seconds
+        self.network_sample_seconds = network_sample_seconds
+        self.network_sample_fee_addresses = network_sample_fee_addresses
         self.max_queue_size = max_queue_size
         self.display_seconds = display_seconds
         self.enable_account_notifications = enable_account_notifications
@@ -766,6 +989,9 @@ class Capture:
             "account_notifications": out_dir / "account_notifications.jsonl",
             "snapshots": out_dir / "account_snapshots.jsonl",
             "discovered_accounts": out_dir / "discovered_token_accounts.jsonl",
+            "tx_features": out_dir / "tx_features.jsonl",
+            "pool_events": out_dir / "pool_events.jsonl",
+            "network_samples": out_dir / "network_samples.jsonl",
             "report": out_dir / "viability_report.json",
         }
 
@@ -777,12 +1003,24 @@ class Capture:
             "slot",
             "block_time",
             "iso_time",
+            "first_seen_at",
+            "first_seen_source",
+            "discovery_latency_seconds",
+            "fetch_lag_seconds",
             "err",
             "seen_by",
             "mentions_mint_in_balances",
             "mint_accounts_changed",
             "mint_balance_delta_sum",
             "fee_lamports",
+            "compute_unit_limit",
+            "compute_unit_price_micro_lamports",
+            "compute_units_consumed",
+            "priority_fee_lamports_est",
+            "pool_event_primary",
+            "pool_event_labels",
+            "pool_event_confidence",
+            "pool_event_evidence",
             "has_inner_instructions",
             "log_count",
         ]
@@ -790,6 +1028,8 @@ class Capture:
         self.seen_sigs: Set[str] = set()
         self.fetched_sigs: Set[str] = set()
         self.signature_sources: Dict[str, Set[str]] = {}
+        self.signature_first_seen_at: Dict[str, str] = {}
+        self.signature_first_seen_source: Dict[str, str] = {}
         self.attempts: Dict[str, int] = {}
         self.pending: asyncio.Queue[str] = asyncio.Queue(maxsize=max_queue_size)
 
@@ -806,6 +1046,8 @@ class Capture:
             "account_notifications": 0,
             "account_snapshots": 0,
             "discovered_token_accounts": 0,
+            "pool_events": 0,
+            "network_samples": 0,
         }
 
         self.load_existing_state()
@@ -817,6 +1059,10 @@ class Capture:
                 self.seen_sigs.add(sig)
                 src = obj.get("source") or obj.get("seen_by") or "existing"
                 self.signature_sources.setdefault(sig, set()).add(str(src))
+                first_seen_at = obj.get("first_seen_at")
+                if first_seen_at:
+                    self.signature_first_seen_at[sig] = str(first_seen_at)
+                self.signature_first_seen_source.setdefault(sig, str(src))
 
         self.fetched_sigs |= read_csv_col(self.paths["tx_index"], "signature")
 
@@ -842,6 +1088,8 @@ class Capture:
             "poll_seconds_connected": self.poll_seconds_connected,
             "backfill_limit": self.backfill_limit,
             "snapshot_seconds": self.snapshot_seconds,
+            "network_sample_seconds": self.network_sample_seconds,
+            "network_sample_fee_addresses": self.network_sample_fee_addresses,
             "tx_retry_seconds": self.tx_retry_seconds,
             "max_tx_attempts": self.max_tx_attempts,
             "enable_account_notifications": self.enable_account_notifications,
@@ -876,6 +1124,8 @@ class Capture:
                 f"new_this_run={self.stats['signatures_new_this_run']} "
                 f"failed_fetches={self.stats['transactions_failed']} "
                 f"discovered_accounts={len(self.discovered_token_accounts)} "
+                f"pool_events={self.stats['pool_events']} "
+                f"net_samples={self.stats['network_samples']} "
                 f"snapshots={self.stats['account_snapshots']} "
                 f"tx_rate={fetched_per_min:.2f}/min "
                 f"rpc_ok={rpc_ok}/{rpc_calls} "
@@ -895,12 +1145,15 @@ class Capture:
         is_new = sig not in self.seen_sigs
 
         if is_new:
+            first_seen_at = now_iso()
             self.seen_sigs.add(sig)
+            self.signature_first_seen_at[sig] = first_seen_at
+            self.signature_first_seen_source[sig] = source
             self.stats["signatures_new_this_run"] += 1
             self.stats["signatures_seen"] = len(self.seen_sigs)
 
             append_jsonl(self.paths["signatures"], {
-                "first_seen_at": now_iso(),
+                "first_seen_at": first_seen_at,
                 "signature": sig,
                 "seen_by": seen_by,
                 "source": source,
@@ -1055,10 +1308,11 @@ class Capture:
             res, rpc_name = await asyncio.to_thread(rpc_get_transaction, self.rpc_pool, sig)
 
             if res.ok:
+                fetched_at = now_iso()
                 tx = res.result
 
                 append_jsonl(self.paths["raw"], {
-                    "fetched_at": now_iso(),
+                    "fetched_at": fetched_at,
                     "signature": sig,
                     "attempt": attempt,
                     "rpc": rpc_name,
@@ -1073,8 +1327,26 @@ class Capture:
                     self.signature_sources.get(sig, set()),
                     rpc_name,
                     attempt,
+                    fetched_at,
+                    self.signature_first_seen_at.get(sig),
+                    self.signature_first_seen_source.get(sig),
+                    self.quote_mints,
                 )
                 append_csv(self.paths["tx_index"], row, self.csv_fields)
+                append_jsonl(self.paths["tx_features"], row)
+
+                if row.get("pool_event_primary"):
+                    self.stats["pool_events"] += 1
+                    append_jsonl(self.paths["pool_events"], {
+                        "detected_at": fetched_at,
+                        "signature": sig,
+                        "slot": row.get("slot"),
+                        "block_time": row.get("block_time"),
+                        "primary": row.get("pool_event_primary"),
+                        "labels": str(row.get("pool_event_labels") or "").split(",") if row.get("pool_event_labels") else [],
+                        "confidence": row.get("pool_event_confidence"),
+                        "evidence": str(row.get("pool_event_evidence") or "").split(",") if row.get("pool_event_evidence") else [],
+                    })
 
                 self.fetched_sigs.add(sig)
                 self.stats["transactions_fetched"] += 1
@@ -1157,6 +1429,75 @@ class Capture:
 
             await asyncio.sleep(self.snapshot_seconds)
 
+    async def network_sampler(self) -> None:
+        if self.network_sample_seconds <= 0:
+            return
+
+        while not self.stop_event.is_set():
+            sampled_at = now_iso()
+            perf_res, perf_rpc = await asyncio.to_thread(
+                rpc_get_recent_performance_samples,
+                self.rpc_pool,
+                1,
+            )
+
+            fee_addresses = self.watch_addresses if self.network_sample_fee_addresses else []
+            fee_res, fee_rpc = await asyncio.to_thread(
+                rpc_get_recent_prioritization_fees,
+                self.rpc_pool,
+                fee_addresses,
+            )
+
+            sample = {
+                "sampled_at": sampled_at,
+                "performance_rpc": perf_rpc,
+                "prioritization_fee_rpc": fee_rpc,
+                "performance_ok": perf_res.ok,
+                "prioritization_fee_ok": fee_res.ok,
+                "performance_error": perf_res.error,
+                "prioritization_fee_error": fee_res.error,
+                "recent_performance_sample": None,
+                "recent_prioritization_fees": None,
+                "avg_slot_time_ms": None,
+                "tx_per_second": None,
+                "prioritization_fee_min": None,
+                "prioritization_fee_p50": None,
+                "prioritization_fee_max": None,
+            }
+
+            if perf_res.ok and isinstance(perf_res.result, list) and perf_res.result:
+                perf = perf_res.result[0]
+                sample["recent_performance_sample"] = perf
+                try:
+                    num_slots = float(perf.get("numSlots") or 0)
+                    sample_period = float(perf.get("samplePeriodSecs") or 0)
+                    num_txs = float(perf.get("numTransactions") or 0)
+                    if num_slots > 0 and sample_period > 0:
+                        sample["avg_slot_time_ms"] = round(sample_period / num_slots * 1000.0, 3)
+                    if sample_period > 0:
+                        sample["tx_per_second"] = round(num_txs / sample_period, 3)
+                except Exception:
+                    pass
+
+            if fee_res.ok and isinstance(fee_res.result, list):
+                sample["recent_prioritization_fees"] = fee_res.result
+                fees = []
+                for row in fee_res.result:
+                    if isinstance(row, dict) and row.get("prioritizationFee") is not None:
+                        try:
+                            fees.append(int(row.get("prioritizationFee")))
+                        except Exception:
+                            pass
+                if fees:
+                    fees_sorted = sorted(fees)
+                    sample["prioritization_fee_min"] = fees_sorted[0]
+                    sample["prioritization_fee_p50"] = fees_sorted[len(fees_sorted) // 2]
+                    sample["prioritization_fee_max"] = fees_sorted[-1]
+
+            self.stats["network_samples"] += 1
+            append_jsonl(self.paths["network_samples"], sample)
+            await asyncio.sleep(self.network_sample_seconds)
+
     async def reporter(self) -> None:
         while not self.stop_event.is_set():
             self.write_report(partial=True)
@@ -1190,6 +1531,11 @@ class Capture:
             "discovered_token_accounts": len(self.discovered_token_accounts),
             "snapshot_accounts": len(self.snapshot_accounts),
             "stats_this_run": self.stats,
+            "feature_outputs": {
+                "tx_features": str(self.paths["tx_features"]),
+                "pool_events": str(self.paths["pool_events"]),
+                "network_samples": str(self.paths["network_samples"]),
+            },
             "rpc_stats": self.rpc_pool.stats(),
             "viability": {
                 "usable_for_rough_timeline": coverage >= 0.5 and fetched >= 20,
@@ -1216,6 +1562,9 @@ class Capture:
 
         if self.snapshot_seconds > 0:
             tasks.append(asyncio.create_task(self.snapshotter()))
+
+        if self.network_sample_seconds > 0:
+            tasks.append(asyncio.create_task(self.network_sampler()))
 
         async def stop_after() -> None:
             await asyncio.sleep(self.duration_seconds)
@@ -1245,6 +1594,7 @@ class Capture:
 
 def parse_args() -> argparse.Namespace:
     env_parser = argparse.ArgumentParser(add_help=False)
+    env_parser.add_argument("--config", type=Path, default=DEFAULT_CAPTURE_CONFIG_PATH, help="JSON config file for stable capture defaults.")
     env_parser.add_argument("--env-file", default=".env", help="Path to .env file. Default: .env")
     env_parser.add_argument(
         "--env-override",
@@ -1254,9 +1604,9 @@ def parse_args() -> argparse.Namespace:
 
     env_args, remaining = env_parser.parse_known_args()
     loaded_env = load_env_file(Path(env_args.env_file), override=env_args.env_override)
+    config_defaults = load_json_config_defaults(env_args.config)
 
     parser = argparse.ArgumentParser(parents=[env_parser])
-    parser.set_defaults(_loaded_env_file=env_args.env_file, _loaded_env_keys=sorted(loaded_env.keys()))
 
     parser.add_argument("--mint", required=True, help="Target token mint")
     parser.add_argument("--pair", action="append", default=[], help="Pair/pool address to watch; can pass multiple")
@@ -1278,12 +1628,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-seconds-connected", type=float, default=60.0, help="Gap-fill polling interval while websocket is healthy.")
     parser.add_argument("--backfill-limit", type=int, default=5)
     parser.add_argument("--snapshot-seconds", type=float, default=0.0, help="Periodic getMultipleAccounts interval. Use 0 to disable.")
+    parser.add_argument("--network-sample-seconds", type=float, default=60.0, help="Sparse congestion/fee sampling interval. Use 0 to disable.")
+    parser.add_argument("--network-sample-fee-addresses", action="store_true", help="Pass watched addresses to getRecentPrioritizationFees. Default samples global fee pressure.")
     parser.add_argument("--max-queue-size", type=int, default=100000)
     parser.add_argument("--quote-mint", action="append", default=[WSOL_MINT, USDC_MINT])
     parser.add_argument("--display-seconds", type=float, default=10.0, help="CLI progress display interval. Use 0 to disable.")
     parser.add_argument("--enable-account-notifications", action="store_true", help="Subscribe to account notifications over websocket. Disabled by default to save streaming credits.")
     parser.add_argument("--debug", action="store_true")
 
+    parser.set_defaults(
+        **config_defaults,
+        config=env_args.config,
+        _loaded_env_file=env_args.env_file,
+        _loaded_env_keys=sorted(loaded_env.keys()),
+    )
     return parser.parse_args(remaining)
 
 
@@ -1294,8 +1652,15 @@ async def async_main() -> int:
     ws_url = resolve_ws_url(args.ws)
 
     watch_addresses: List[str] = []
+    ignored_watch_addresses: List[str] = []
     for a in [args.mint] + args.pair + args.watch:
-        if a and a not in watch_addresses:
+        if not a:
+            continue
+        if not is_valid_solana_address(a):
+            if a not in ignored_watch_addresses:
+                ignored_watch_addresses.append(a)
+            continue
+        if a not in watch_addresses:
             watch_addresses.append(a)
 
     out_dir = Path(args.out) / args.mint
@@ -1316,6 +1681,8 @@ async def async_main() -> int:
         poll_seconds_connected=args.poll_seconds_connected,
         backfill_limit=args.backfill_limit,
         snapshot_seconds=args.snapshot_seconds,
+        network_sample_seconds=args.network_sample_seconds,
+        network_sample_fee_addresses=args.network_sample_fee_addresses,
         max_queue_size=args.max_queue_size,
         display_seconds=args.display_seconds,
         enable_account_notifications=args.enable_account_notifications,
@@ -1334,6 +1701,10 @@ async def async_main() -> int:
     print("Watch addresses:", flush=True)
     for a in watch_addresses:
         print(" ", a, flush=True)
+    if ignored_watch_addresses:
+        print("Ignored invalid watch addresses:", flush=True)
+        for a in ignored_watch_addresses:
+            print(" ", a, flush=True)
 
     print("HTTP RPC endpoints:", flush=True)
     for u in rpc_urls:
