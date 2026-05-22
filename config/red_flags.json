@@ -14,16 +14,16 @@
       "enabled": true,
       "required": false,
       "params": {
-        "min_liquidity_usd": 10000,
+        "min_liquidity_usd": 5000,
         "intended_position_size_usd": 30,
-        "position_size_multiplier": 30
+        "position_size_multiplier": 50
       }
     },
     "risk_score_exceeds_threshold": {
       "enabled": true,
       "required": false,
       "params": {
-        "max_risk_score": 85
+        "max_risk_score": 90
       }
     },
     "critical_risk_level": {
@@ -49,7 +49,7 @@
       "params": {}
     },
     "no_sells_after_activity_window": {
-      "enabled": true,
+      "enabled": false,
       "required": false,
       "params": {
         "minimum_buys": 10
@@ -59,25 +59,25 @@
       "enabled": true,
       "required": false,
       "params": {
-        "max_top_holders_pct": 30,
+        "max_top_holders_pct": 55,
         "max_insider_score": 80,
-        "max_bundle_score": 25,
-        "max_sniper_score": 25,
+        "max_bundle_score": 60,
+        "max_sniper_score": 60,
         "max_dev_rug_history": 0
       }
     },
     "permanent_delegate_enabled": {
-      "enabled": false,
+      "enabled": true,
       "required": false,
       "params": {}
     },
     "dangerous_transfer_hook_detected": {
-      "enabled": false,
+      "enabled": true,
       "required": false,
       "params": {}
     },
     "cannot_sell_test_amount": {
-      "enabled": false,
+      "enabled": true,
       "required": false,
       "params": {}
     }

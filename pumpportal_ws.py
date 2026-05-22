@@ -379,6 +379,59 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+async def stream_pumpportal(
+    *,
+    ws: Any,
+    out: Any,
+    args: argparse.Namespace,
+    raw_path: Path,
+    metrics: StreamMetrics,
+    session_start: float,
+) -> None:
+    await ws.send(json.dumps({"method": "subscribeMigration"}))
+    await ws.send(json.dumps({"method": "subscribeNewToken"}))
+
+    last_metrics_print = time.time()
+
+    while args.duration <= 0 or time.time() - session_start < args.duration:
+        try:
+            msg = await asyncio.wait_for(ws.recv(), timeout=30)
+        except asyncio.TimeoutError:
+            if args.display == "bar":
+                print_bar(metrics, args.duration)
+            else:
+                print("no message in 30s; still connected", flush=True)
+            continue
+
+        received_at_ms = now_ms()
+        data = normalize_message(msg)
+        raw_row = build_raw_row(data=data, received_at_ms=received_at_ms)
+
+        out.write(
+            json.dumps(
+                raw_row,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        out.write("\n")
+        out.flush()
+
+        metrics.update(raw_row)
+
+        if args.display == "all":
+            print(json.dumps(raw_row, ensure_ascii=False))
+
+        elif args.display == "bar":
+            print_bar(metrics, args.duration)
+
+        else:
+            now = time.time()
+            if now - last_metrics_print >= args.metrics_every:
+                print_metrics(metrics, raw_path)
+                last_metrics_print = now
+
+
 async def main() -> None:
     args = parse_args()
     repo_root = Path(__file__).resolve().parent
@@ -397,55 +450,32 @@ async def main() -> None:
         raw_path = default_raw_jsonl_path(repo_root)
     metrics = StreamMetrics()
 
-    print("listening to PumpPortal WebSocket")
-    print(f"writing raw JSONL to: {raw_path}")
-    print(f"display mode: {args.display}")
+    print("listening to PumpPortal WebSocket", flush=True)
+    print(f"writing raw JSONL to: {raw_path}", flush=True)
+    print(f"display mode: {args.display}", flush=True)
 
-    async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
-        await ws.send(json.dumps({"method": "subscribeMigration"}))
-        await ws.send(json.dumps({"method": "subscribeNewToken"}))
+    program_start = time.time()
+    reconnect_delay_seconds = 5.0
 
-        start = time.time()
-        last_metrics_print = start
-
-        with raw_path.open("a", encoding="utf-8") as out:
-            while args.duration <= 0 or time.time() - start < args.duration:
-                try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=30)
-                except asyncio.TimeoutError:
-                    if args.display == "bar":
-                        print_bar(metrics, args.duration)
-                    else:
-                        print("no message in 30s; still connected")
-                    continue
-
-                received_at_ms = now_ms()
-                data = normalize_message(msg)
-                raw_row = build_raw_row(data=data, received_at_ms=received_at_ms)
-
-                out.write(
-                    json.dumps(
-                        raw_row,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
+    with raw_path.open("a", encoding="utf-8") as out:
+        while args.duration <= 0 or time.time() - program_start < args.duration:
+            try:
+                async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+                    await stream_pumpportal(
+                        ws=ws,
+                        out=out,
+                        args=args,
+                        raw_path=raw_path,
+                        metrics=metrics,
+                        session_start=program_start,
                     )
+            except websockets.exceptions.ConnectionClosedError as exc:
+                print(
+                    f"PumpPortal connection closed ({exc}); reconnecting in "
+                    f"{reconnect_delay_seconds:g}s",
+                    flush=True,
                 )
-                out.write("\n")
-                out.flush()
-
-                metrics.update(raw_row)
-
-                if args.display == "all":
-                    print(json.dumps(raw_row, ensure_ascii=False))
-
-                elif args.display == "bar":
-                    print_bar(metrics, args.duration)
-
-                else:
-                    now = time.time()
-                    if now - last_metrics_print >= args.metrics_every:
-                        print_metrics(metrics, raw_path)
-                        last_metrics_print = now
+                await asyncio.sleep(reconnect_delay_seconds)
 
     if args.display == "bar":
         print()

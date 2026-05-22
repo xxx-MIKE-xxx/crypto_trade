@@ -12,7 +12,7 @@
   "pumpportal_auto_restart": true,
   "pumpportal_restart_delay_seconds": 5.0,
   "pumpportal_jsonl_stale_restart_seconds": 180.0,
-  "pumpportal_display": "bar",
+  "pumpportal_display": "metrics",
   "max_concurrent_coins": 3,
   "scan_poll_seconds": 2.0,
   "metrics_log_seconds": 30.0,

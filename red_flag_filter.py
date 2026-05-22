@@ -334,6 +334,140 @@ def _metadata_mutable(context: Mapping[str, Any], params: Mapping[str, Any]) -> 
     )
 
 
+def _truthy_or_present_field_rule(
+    data: Mapping[str, Any],
+    *,
+    paths: tuple[str, ...],
+    code: str,
+    message: str,
+) -> _RuleResult:
+    """Reject if the first present field is truthy or contains a non-empty authority/program value.
+
+    This is useful for fields that may be returned as:
+    - boolean true/false
+    - an authority address string
+    - a program id string
+    - an object/list describing an enabled extension
+    """
+    value, path = _first_present(data, paths)
+    if value is MISSING:
+        return _RuleResult(missing=[paths[0]])
+
+    parsed_bool = _as_bool(value)
+    if parsed_bool is not None:
+        active = parsed_bool
+    elif isinstance(value, str):
+        normalized = value.strip().lower()
+        active = normalized not in {
+            "",
+            "none",
+            "null",
+            "false",
+            "0",
+            "disabled",
+            "not_set",
+            "not set",
+            "11111111111111111111111111111111",
+        }
+    elif isinstance(value, (list, tuple, set, dict)):
+        active = bool(value)
+    else:
+        active = bool(value)
+
+    if active:
+        return _RuleResult(True, code, message, value, True)
+
+    return _RuleResult()
+
+
+def _permanent_delegate_enabled(context: Mapping[str, Any], params: Mapping[str, Any]) -> _RuleResult:
+    return _truthy_or_present_field_rule(
+        context["security_report"],
+        paths=(
+            "categories.contract_permissions.metrics.permanent_delegate_enabled",
+            "categories.contract_permissions.metrics.has_permanent_delegate",
+            "categories.contract_permissions.metrics.permanent_delegate",
+            "categories.contract_permissions.metrics.permanent_delegate_authority",
+            "raw.rugcheck.token.permanentDelegate",
+            "raw.rugcheck.token_extensions.permanent_delegate",
+            "raw.defade.analysis.permanentDelegate",
+        ),
+        code="PERMANENT_DELEGATE_ENABLED",
+        message="Permanent delegate is enabled",
+    )
+
+
+def _dangerous_transfer_hook_detected(context: Mapping[str, Any], params: Mapping[str, Any]) -> _RuleResult:
+    return _truthy_or_present_field_rule(
+        context["security_report"],
+        paths=(
+            "categories.contract_permissions.metrics.dangerous_transfer_hook_detected",
+            "categories.contract_permissions.metrics.transfer_hook_enabled",
+            "categories.contract_permissions.metrics.has_transfer_hook",
+            "categories.contract_permissions.metrics.transfer_hook_program",
+            "raw.rugcheck.token_extensions.transfer_hook",
+            "raw.defade.analysis.transferHook",
+        ),
+        code="DANGEROUS_TRANSFER_HOOK_DETECTED",
+        message="Dangerous or unsupported transfer hook is detected",
+    )
+
+
+def _cannot_sell_test_amount(context: Mapping[str, Any], params: Mapping[str, Any]) -> _RuleResult:
+    report = context["security_report"]
+
+    cannot_sell_paths = (
+        "categories.trading_behavior.metrics.cannot_sell_test_amount",
+        "categories.trading_behavior.metrics.sell_test_failed",
+        "categories.trading_behavior.metrics.cannot_sell",
+        "categories.sellability.metrics.cannot_sell_test_amount",
+        "categories.sellability.metrics.sell_test_failed",
+        "raw.jupiter.sell_test.cannot_sell_test_amount",
+        "raw.jupiter.sell_test.sell_test_failed",
+    )
+    value, path = _first_present(report, cannot_sell_paths)
+    if value is not MISSING:
+        parsed = _as_bool(value)
+        if parsed is None:
+            return _RuleResult(missing=[path or cannot_sell_paths[0]])
+        if parsed:
+            return _RuleResult(
+                True,
+                "CANNOT_SELL_TEST_AMOUNT",
+                "Sell simulation failed for configured test amount",
+                parsed,
+                False,
+            )
+        return _RuleResult()
+
+    can_sell_paths = (
+        "categories.trading_behavior.metrics.can_sell_test_amount",
+        "categories.trading_behavior.metrics.can_sell",
+        "categories.sellability.metrics.can_sell_test_amount",
+        "categories.sellability.metrics.can_sell",
+        "raw.jupiter.sell_test.can_sell_test_amount",
+        "raw.jupiter.sell_test.can_sell",
+    )
+    value, path = _first_present(report, can_sell_paths)
+    if value is MISSING:
+        return _RuleResult(missing=[cannot_sell_paths[0]])
+
+    parsed = _as_bool(value)
+    if parsed is None:
+        return _RuleResult(missing=[path or can_sell_paths[0]])
+
+    if not parsed:
+        return _RuleResult(
+            True,
+            "CANNOT_SELL_TEST_AMOUNT",
+            "Sell simulation failed for configured test amount",
+            parsed,
+            True,
+        )
+
+    return _RuleResult()
+
+
 def _no_sells_after_activity_window(context: Mapping[str, Any], params: Mapping[str, Any]) -> _RuleResult:
     report = context["security_report"]
     dex = context["dex_features"]
@@ -414,7 +548,9 @@ def _holder_concentration(context: Mapping[str, Any], params: Mapping[str, Any])
 
 
 RULE_EVALUATORS = {
+    "cannot_sell_test_amount": _cannot_sell_test_amount,
     "critical_risk_level": _critical_risk_level,
+    "dangerous_transfer_hook_detected": _dangerous_transfer_hook_detected,
     "freeze_authority_active": _freeze_authority_active,
     "holder_concentration": _holder_concentration,
     "liquidity_below_threshold": _liquidity_below_threshold,
@@ -422,6 +558,7 @@ RULE_EVALUATORS = {
     "mint_authority_active": _mint_authority_active,
     "no_sells_after_activity_window": _no_sells_after_activity_window,
     "non_transferable": _non_transferable,
+    "permanent_delegate_enabled": _permanent_delegate_enabled,
     "risk_score_exceeds_threshold": _risk_score_exceeds_threshold,
     "transfer_fee_upgradable": _transfer_fee_upgradable,
 }

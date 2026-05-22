@@ -38,6 +38,7 @@ import random
 import signal
 import shlex
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -425,6 +426,12 @@ class PrettyConsoleHandler(logging.StreamHandler):
             )
         if event == "pumpportal_jsonl_ready":
             return f"PumpPortal JSONL ready: {getattr(record, 'path', '?')}"
+        if event == "pumpportal_tail_at_eof":
+            return (
+                f"Tail at end of {getattr(record, 'path', '?')} "
+                f"(offset={getattr(record, 'file_offset', '?')}/{getattr(record, 'file_size', '?')}); "
+                "waiting for new migrations only"
+            )
         if event == "pumpportal_process_exited":
             return (
                 f"PumpPortal writer exited (code={getattr(record, 'return_code', '?')}); "
@@ -641,6 +648,14 @@ def resolve_pumpportal_jsonl_path(path: Path) -> Path:
     return resolved
 
 
+def subprocess_pumpportal_display(display: str) -> str:
+    """Bar mode uses TTY cursor controls; the orchestrator captures PumpPortal stdout via pipe."""
+    normalized = (display or "metrics").strip().lower()
+    if normalized == "bar":
+        return "metrics"
+    return normalized
+
+
 def load_json_config_defaults(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -701,7 +716,7 @@ class OrchestratorConfig:
 
     run_pumpportal: bool = True
     pumpportal_duration_seconds: int = 0
-    pumpportal_display: str = "bar"
+    pumpportal_display: str = "metrics"
     pumpportal_jsonl_wait_seconds: float = 120.0
     pumpportal_auto_restart: bool = True
     pumpportal_restart_delay_seconds: float = 5.0
@@ -1137,6 +1152,13 @@ async def log_stream(
             )
 
 
+def subprocess_creation_flags() -> int:
+    """Isolate child processes from console Ctrl+C on Windows."""
+    if os.name != "nt":
+        return 0
+    return subprocess.CREATE_NEW_PROCESS_GROUP
+
+
 def process_is_alive(pid: Optional[int]) -> bool:
     if pid is None:
         return False
@@ -1229,12 +1251,19 @@ async def run_subprocess(
     if stage_log_path is not None:
         stage_log_file = stage_log_path.open("a", encoding="utf-8")
 
+    subprocess_kwargs: dict[str, Any] = {}
+    creationflags = subprocess_creation_flags()
+    if creationflags:
+        subprocess_kwargs["creationflags"] = creationflags
+    else:
+        subprocess_kwargs["start_new_session"] = True
+
     proc = await asyncio.create_subprocess_exec(
         *[str(arg) for arg in command],
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(cwd) if cwd else None,
-        start_new_session=(os.name != "nt"),
+        **subprocess_kwargs,
     )
 
     stdout_task = asyncio.create_task(
@@ -1525,17 +1554,31 @@ class MemeCoinPipelineOrchestrator:
             return
         self.initialize_offset_to_end()
 
+    def mark_pumpportal_jsonl_ready_if_present(self) -> bool:
+        if self._pumpportal_jsonl_ready:
+            return True
+        path = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
+        if not path.exists():
+            return False
+        self._pumpportal_jsonl_ready = True
+        self.logger.info(
+            "pumpportal_jsonl_ready",
+            extra={"event": "pumpportal_jsonl_ready", "path": str(path)},
+        )
+        return True
+
     async def start_pumpportal_process(
         self,
     ) -> tuple[asyncio.subprocess.Process, list[asyncio.Task[None]], Optional[TextIO]]:
         raw_jsonl = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
+        pumpportal_display = subprocess_pumpportal_display(self.config.pumpportal_display)
         default_command = [
             self.config.python_executable,
             str(self.config.pumpportal_script_path),
             "--duration",
             str(self.config.pumpportal_duration_seconds),
             "--display",
-            self.config.pumpportal_display,
+            pumpportal_display,
             "--raw-jsonl",
             str(raw_jsonl),
         ]
@@ -1546,7 +1589,7 @@ class MemeCoinPipelineOrchestrator:
                 "python": self.config.python_executable,
                 "script": self.config.pumpportal_script_path,
                 "duration_seconds": self.config.pumpportal_duration_seconds,
-                "display": self.config.pumpportal_display,
+                "display": pumpportal_display,
                 "raw_jsonl": raw_jsonl,
             },
         )
@@ -1571,11 +1614,18 @@ class MemeCoinPipelineOrchestrator:
             extra={"event": "pumpportal_process_start", "stage": stage, "command": safe_cmd},
         )
 
+        subprocess_kwargs: dict[str, Any] = {}
+        creationflags = subprocess_creation_flags()
+        if creationflags:
+            subprocess_kwargs["creationflags"] = creationflags
+        else:
+            subprocess_kwargs["start_new_session"] = True
+
         proc = await asyncio.create_subprocess_exec(
             *[str(arg) for arg in command],
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            start_new_session=(os.name != "nt"),
+            **subprocess_kwargs,
         )
         tasks = [
             asyncio.create_task(
@@ -1699,6 +1749,7 @@ class MemeCoinPipelineOrchestrator:
                     with contextlib.suppress(asyncio.CancelledError):
                         await wait_task
                 await self.stop_pumpportal_worker(proc, log_tasks, log_file)
+                await asyncio.sleep(0.5)
 
             if self.shutdown_event.is_set():
                 return
@@ -1724,6 +1775,22 @@ class MemeCoinPipelineOrchestrator:
 
             restarts += 1
             delay = max(0.0, self.config.pumpportal_restart_delay_seconds)
+            if exit_code == 3221225794:
+                delay = max(delay, 10.0)
+                self.logger.error(
+                    "pumpportal_windows_crash",
+                    extra={
+                        "event": "pumpportal_windows_crash",
+                        "return_code": exit_code,
+                        "restart_count": restarts,
+                        "hint": (
+                            "PumpPortal subprocess crashed (Windows 0xC0000005). "
+                            "Stop other orchestrator or pumpportal_ws.py instances, then retry. "
+                            "You can also run pumpportal_ws.py in a separate terminal and start "
+                            "the orchestrator with --no-pumpportal."
+                        ),
+                    },
+                )
             if startup_error is not None:
                 self.logger.warning(
                     "pumpportal_startup_failed",
@@ -1773,7 +1840,7 @@ class MemeCoinPipelineOrchestrator:
                     time.monotonic() + self.config.pumpportal_jsonl_wait_seconds
                 )
                 while (
-                    not self._pumpportal_jsonl_ready
+                    not self.mark_pumpportal_jsonl_ready_if_present()
                     and time.monotonic() < ready_deadline
                     and not self.shutdown_event.is_set()
                 ):
@@ -1825,12 +1892,17 @@ class MemeCoinPipelineOrchestrator:
             )
 
     def install_signal_handlers(self) -> None:
-        loop = asyncio.get_running_loop()
-
-        def request_shutdown() -> None:
+        def request_shutdown(_signum: int | None = None, _frame: Any | None = None) -> None:
             self.logger.warning("shutdown_requested", extra={"event": "shutdown_requested"})
             self.shutdown_event.set()
 
+        if os.name == "nt":
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(signal.SIGINT, request_shutdown)
+                signal.signal(signal.SIGTERM, request_shutdown)
+            return
+
+        loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             with contextlib.suppress(NotImplementedError):
                 loop.add_signal_handler(sig, request_shutdown)
@@ -1855,14 +1927,29 @@ class MemeCoinPipelineOrchestrator:
         )
 
     async def scan_loop(self) -> None:
+        jsonl_path = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
+        jsonl_size = jsonl_path.stat().st_size if jsonl_path.exists() else 0
         self.logger.info(
             "scan_started",
             extra={
                 "event": "scan_started",
                 "pumpportal_jsonl_path": str(self.config.pumpportal_jsonl_path),
                 "max_concurrent_coins": self.config.max_concurrent_coins,
+                "file_offset": self.file_offset,
+                "file_size": jsonl_size,
             },
         )
+        if jsonl_path.exists() and self.file_offset >= jsonl_size:
+            self.logger.warning(
+                "pumpportal_tail_at_eof",
+                extra={
+                    "event": "pumpportal_tail_at_eof",
+                    "path": str(jsonl_path),
+                    "file_offset": self.file_offset,
+                    "file_size": jsonl_size,
+                    "hint": "Only new JSONL bytes after this offset are processed; reset state file_offset or pass --start-at-end on a fresh state to follow live tail.",
+                },
+            )
 
         while not self.shutdown_event.is_set():
             processed_any = await self.read_available_lines()
@@ -3397,7 +3484,11 @@ async def async_main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 def main() -> int:
-    return asyncio.run(async_main())
+    try:
+        return asyncio.run(async_main())
+    except KeyboardInterrupt:
+        print("Shutdown requested.", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":
