@@ -31,6 +31,7 @@ import argparse
 import asyncio
 import contextlib
 import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -244,6 +245,7 @@ class PrettyConsoleHandler(logging.StreamHandler):
         "scan_started",
         "orchestrator_stopped",
         "coin_pipeline_red_flag_rejected",
+        "red_flag_audit_saved",
     }
 
     def __init__(
@@ -519,6 +521,8 @@ class PrettyConsoleHandler(logging.StreamHandler):
                 f"Red-flag rejected {coin} "
                 f"(total={getattr(record, 'red_flag_rejected_coin_analyses', '?')})"
             )
+        if event == "red_flag_audit_saved":
+            return f"Red-flag audit saved for {coin}: {getattr(record, 'audit_dir', '?')}"
         if event == "coin_analytics_failed":
             return f"[{coin}] analytics failed (capture may continue): {getattr(record, 'error', record.getMessage())}"
         if event == "orchestrator_fatal_error":
@@ -634,6 +638,8 @@ def make_json_safe(value: Any) -> Any:
 
 
 PUMPPORTAL_RAW_SUBDIR = Path("data") / "raw" / "migrations"
+SECURITY_REPORT_FILENAME = "security_report"
+RED_FLAG_REJECTIONS_INDEX = "rejections.jsonl"
 
 
 def default_pumpportal_jsonl() -> Path:
@@ -754,6 +760,8 @@ class OrchestratorConfig:
     red_flag_filter_enabled: bool = True
     red_flag_config_path: Path = Path("config/red_flags.json")
     red_flag_delete_rejected_capture_data: bool = True
+    red_flag_audit_root: Path = Path("data/raw/red_flags")
+    red_flag_save_audit_artifacts: bool = True
 
     dexscreener_out_root: Path = Path("data/raw/analytics")
     dexscreener_chain: str = "solana"
@@ -2289,6 +2297,7 @@ class MemeCoinPipelineOrchestrator:
             raise
 
         if decision.rejected:
+            self.save_red_flag_audit_artifacts(ctx, security_report, decision)
             await self.cancel_capture_task(ctx, capture_task)
             self.delete_rejected_capture_data(ctx.mint)
             raise RedFlagRejected(ctx.mint, decision)
@@ -2690,6 +2699,95 @@ class MemeCoinPipelineOrchestrator:
             extra={"event": "capture_cancelled_for_red_flag", "coin": ctx.mint},
         )
         self.emit_status_event("capture_cancelled_for_red_flag", mint=ctx.mint)
+
+    def red_flag_audit_dir(self, mint: str) -> Path:
+        return self.config.red_flag_audit_root.expanduser().resolve() / mint
+
+    def red_flag_human_security_report_path(self, mint: str) -> Path:
+        return self.config.risk_analysis_root.expanduser().resolve() / mint / SECURITY_REPORT_FILENAME
+
+    def red_flag_config_sha256(self) -> Optional[str]:
+        path = self.config.red_flag_config_path.expanduser().resolve()
+        if not path.exists():
+            return None
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def save_red_flag_audit_artifacts(
+        self,
+        ctx: CoinContext,
+        security_report: Mapping[str, Any],
+        decision: red_flag_filter.RedFlagDecision,
+    ) -> Optional[Path]:
+        if not self.config.red_flag_save_audit_artifacts or self.config.dry_run:
+            return None
+
+        audit_dir = self.red_flag_audit_dir(ctx.mint)
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        rejected_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        risk_export_path = self.risk_report_export_path(ctx.mint)
+        human_report_path = self.red_flag_human_security_report_path(ctx.mint)
+
+        decision_payload: dict[str, Any] = {
+            "mint": ctx.mint,
+            "rejected_at_utc": rejected_at_utc,
+            "symbol": ctx.symbol,
+            "coin_name": ctx.coin_name,
+            "pair_addresses": list(ctx.pair_addresses),
+            "red_flag_config_path": str(self.config.red_flag_config_path),
+            "red_flag_config_sha256": self.red_flag_config_sha256(),
+            "risk_analysis_root": str(self.config.risk_analysis_root),
+            "risk_report_export_path": str(risk_export_path),
+            "decision": decision.to_dict(),
+        }
+        save_json_atomic(audit_dir / "red_flag_decision.json", decision_payload)
+
+        saved_files: list[str] = ["red_flag_decision.json"]
+        if risk_export_path.exists():
+            shutil.copy2(risk_export_path, audit_dir / "security_report.json")
+            saved_files.append("security_report.json")
+        else:
+            save_json_atomic(audit_dir / "security_report.json", dict(security_report))
+            saved_files.append("security_report.json")
+
+        if human_report_path.exists():
+            shutil.copy2(human_report_path, audit_dir / SECURITY_REPORT_FILENAME)
+            saved_files.append(SECURITY_REPORT_FILENAME)
+
+        reject_codes = [
+            str(item.get("code") or item.get("rule") or "")
+            for item in decision.reject_reasons
+            if item.get("code") or item.get("rule")
+        ]
+        append_jsonl(
+            self.config.red_flag_audit_root.expanduser().resolve() / RED_FLAG_REJECTIONS_INDEX,
+            {
+                "mint": ctx.mint,
+                "rejected_at_utc": rejected_at_utc,
+                "evaluated_at_utc": decision.evaluated_at_utc,
+                "reject_codes": reject_codes,
+                "audit_dir": str(audit_dir),
+                "saved_files": saved_files,
+            },
+        )
+
+        self.logger.info(
+            "red_flag_audit_saved",
+            extra={
+                "event": "red_flag_audit_saved",
+                "coin": ctx.mint,
+                "audit_dir": str(audit_dir),
+                "saved_files": saved_files,
+                "reject_codes": reject_codes,
+            },
+        )
+        self.emit_status_event(
+            "red_flag_audit_saved",
+            mint=ctx.mint,
+            audit_dir=str(audit_dir),
+            saved_files=saved_files,
+            reject_codes=reject_codes,
+        )
+        return audit_dir
 
     def delete_rejected_capture_data(self, mint: str) -> Optional[Path]:
         if not self.config.red_flag_delete_rejected_capture_data:
@@ -3294,6 +3392,17 @@ def build_parser(config_defaults: Optional[Mapping[str, Any]] = None) -> argpars
     parser.add_argument("--no-red-flag-filter", action="store_true", help="Disable the hard-stop red flag filter.")
     parser.add_argument("--red-flag-config-path", type=Path, default=Path("config/red_flags.json"))
     parser.add_argument("--keep-red-flag-rejected-capture-data", action="store_true", help="Keep temporary capture data for red-flag rejected coins.")
+    parser.add_argument(
+        "--red-flag-audit-root",
+        type=Path,
+        default=Path("data/raw/red_flags"),
+        help="Per-mint folder root for red-flag rejection audit artifacts.",
+    )
+    parser.add_argument(
+        "--no-red-flag-audit",
+        action="store_true",
+        help="Do not write red-flag decision and security report copies under --red-flag-audit-root.",
+    )
 
     parser.add_argument("--dexscreener-out-root", type=Path, default=Path("data/raw/analytics"))
     parser.add_argument("--dexscreener-chain", default="solana")
@@ -3349,6 +3458,7 @@ def build_parser(config_defaults: Optional[Mapping[str, Any]] = None) -> argpars
         "risk_analysis_root",
         "risk_export_root",
         "red_flag_config_path",
+        "red_flag_audit_root",
         "dexscreener_out_root",
         "post_migration_dex_out_root",
         "website_output_root",
@@ -3412,6 +3522,11 @@ def config_from_args(args: argparse.Namespace) -> OrchestratorConfig:
         red_flag_delete_rejected_capture_data=(
             bool(getattr(args, "red_flag_delete_rejected_capture_data", True))
             and not args.keep_red_flag_rejected_capture_data
+        ),
+        red_flag_audit_root=args.red_flag_audit_root,
+        red_flag_save_audit_artifacts=(
+            bool(getattr(args, "red_flag_save_audit_artifacts", True))
+            and not args.no_red_flag_audit
         ),
         dexscreener_out_root=args.dexscreener_out_root,
         dexscreener_chain=args.dexscreener_chain,

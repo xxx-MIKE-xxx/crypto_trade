@@ -28,6 +28,8 @@
   "red_flag_filter_enabled": true,
   "red_flag_config_path": "config/red_flags.json",
   "red_flag_delete_rejected_capture_data": true,
+  "red_flag_audit_root": "data/raw/red_flags",
+  "red_flag_save_audit_artifacts": true,
   "dexscreener_out_root": "data/raw/analytics",
   "dexscreener_chain": "solana",
   "dexscreener_initial_wait_seconds": 60.0,
