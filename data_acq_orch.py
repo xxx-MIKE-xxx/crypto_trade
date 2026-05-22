@@ -8,11 +8,19 @@ It tails the PumpPortal JSONL file, accepts only migrations whose mint was seen 
 previous new-token/mint event, and runs the downstream scripts for at most N coins
 concurrently.
 
-Default stage order per accepted coin:
-  1. Solana 1h capture
-  2. Solana risk report
-  3. DexScreener polling until token-pair data is available
-  4. Website grader if DexScreener exposes a website link
+When run_pumpportal is enabled, pumpportal_ws.py is supervised and restarted on
+unexpected exits (see pumpportal_auto_restart / pumpportal_restart_delay_seconds /
+pumpportal_jsonl_stale_restart_seconds).
+
+Per migrated coin, Solana 1h capture starts immediately while the security report
+is fetched. The red-flag filter then decides whether to stop and clean up that
+coin, or let DexScreener, website grading, Telegram, and post-migration Dex label
+tracking continue without waiting for capture to finish.
+
+Post-migration Dex label sampling starts only after the hard-stop filter passes.
+
+Analytics failures are logged but do not cancel an in-flight capture. Capture failure
+still fails the coin pipeline.
 
 The orchestrator never uses shell=True. All script calls are executed as argv lists.
 """
@@ -38,6 +46,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence, TextIO
 from urllib.parse import urlparse
+
+import red_flag_filter
 
 
 LOGGER_NAME = "meme_coin_orchestrator"
@@ -153,6 +163,7 @@ class ConsoleDashboardState:
     skipped_due_to_concurrency: int = 0
     completed_coin_analyses: int = 0
     failed_coin_analyses: int = 0
+    red_flag_rejected_coin_analyses: int = 0
     max_concurrent_coins: int = 0
     current_stage: dict[str, str] = field(default_factory=dict)
     coins: dict[str, CoinConsoleState] = field(default_factory=dict)
@@ -198,6 +209,7 @@ def format_metrics_line(state: ConsoleDashboardState, columns: int) -> str:
         f"skip={state.skipped_due_to_concurrency} "
         f"done={state.completed_coin_analyses} "
         f"fail={state.failed_coin_analyses} "
+        f"redflag={state.red_flag_rejected_coin_analyses} "
         f"| {format_coin_badges(state)}"
     )
     return truncate_line(text, columns)
@@ -230,6 +242,7 @@ class PrettyConsoleHandler(logging.StreamHandler):
     banner_dashboard_events = {
         "scan_started",
         "orchestrator_stopped",
+        "coin_pipeline_red_flag_rejected",
     }
 
     def __init__(
@@ -334,6 +347,9 @@ class PrettyConsoleHandler(logging.StreamHandler):
             self.state.failed_coin_analyses = int(
                 getattr(record, "failed_coin_analyses", 0) or 0
             )
+            self.state.red_flag_rejected_coin_analyses = int(
+                getattr(record, "red_flag_rejected_coin_analyses", 0) or 0
+            )
             stage_map = getattr(record, "current_stage", {}) or {}
             if isinstance(stage_map, Mapping):
                 self.state.current_stage = {str(k): str(v) for k, v in stage_map.items()}
@@ -362,6 +378,15 @@ class PrettyConsoleHandler(logging.StreamHandler):
             coin_state.running_stage = ""
         elif event == "coin_pipeline_started" and coin:
             self._ensure_coin(coin)
+        elif event == "coin_pipeline_red_flag_rejected":
+            self.state.red_flag_rejected_coin_analyses = int(
+                getattr(record, "red_flag_rejected_coin_analyses", 0)
+                or self.state.red_flag_rejected_coin_analyses
+            )
+            if coin:
+                coin_state = self.state.coins.get(coin)
+                if coin_state:
+                    coin_state.running_stage = ""
         elif event in {"coin_pipeline_completed", "coin_pipeline_failed", "coin_pipeline_cancelled"} and coin:
             coin_state = self.state.coins.get(coin)
             if coin_state:
@@ -400,6 +425,17 @@ class PrettyConsoleHandler(logging.StreamHandler):
             )
         if event == "pumpportal_jsonl_ready":
             return f"PumpPortal JSONL ready: {getattr(record, 'path', '?')}"
+        if event == "pumpportal_process_exited":
+            return (
+                f"PumpPortal writer exited (code={getattr(record, 'return_code', '?')}); "
+                f"restarting in {getattr(record, 'restart_delay_seconds', '?')}s "
+                f"(restart #{getattr(record, 'restart_count', '?')})"
+            )
+        if event == "pumpportal_process_exited_no_restart":
+            return (
+                f"PumpPortal writer exited (code={getattr(record, 'return_code', '?')}); "
+                "auto-restart disabled"
+            )
         if event == "orchestrator_metrics":
             return (
                 f"rows={getattr(record, 'rows_read', 0)} "
@@ -411,6 +447,7 @@ class PrettyConsoleHandler(logging.StreamHandler):
                 f"skipped={getattr(record, 'skipped_due_to_concurrency', 0)} "
                 f"done={getattr(record, 'completed_coin_analyses', 0)} "
                 f"failed={getattr(record, 'failed_coin_analyses', 0)} "
+                f"redflag={getattr(record, 'red_flag_rejected_coin_analyses', 0)} "
                 f"stages={format_stage_map(getattr(record, 'current_stage', {}) or {})}"
             )
         if event == "migration_rejected_without_prior_mint":
@@ -470,12 +507,22 @@ class PrettyConsoleHandler(logging.StreamHandler):
             return f"Failed {coin}: {getattr(record, 'error', record.getMessage())}"
         if event == "coin_pipeline_cancelled":
             return f"Cancelled {coin}"
+        if event == "coin_pipeline_red_flag_rejected":
+            return (
+                f"Red-flag rejected {coin} "
+                f"(total={getattr(record, 'red_flag_rejected_coin_analyses', '?')})"
+            )
+        if event == "coin_analytics_failed":
+            return f"[{coin}] analytics failed (capture may continue): {getattr(record, 'error', record.getMessage())}"
+        if event == "orchestrator_fatal_error":
+            return f"ERR: orchestrator_fatal_error {getattr(record, 'error', record.getMessage())}"
         if event == "orchestrator_stopped":
             return (
                 f"Stopped  rows={getattr(record, 'rows_read', 0)} "
                 f"eligible={getattr(record, 'eligible_migrations', 0)} "
                 f"completed={getattr(record, 'completed_coin_analyses', 0)} "
-                f"failed={getattr(record, 'failed_coin_analyses', 0)}"
+                f"failed={getattr(record, 'failed_coin_analyses', 0)} "
+                f"redflag={getattr(record, 'red_flag_rejected_coin_analyses', 0)}"
             )
 
         prefix = "WARN" if level == "WARNING" else ("ERR" if level == "ERROR" else level)
@@ -656,6 +703,9 @@ class OrchestratorConfig:
     pumpportal_duration_seconds: int = 0
     pumpportal_display: str = "bar"
     pumpportal_jsonl_wait_seconds: float = 120.0
+    pumpportal_auto_restart: bool = True
+    pumpportal_restart_delay_seconds: float = 5.0
+    pumpportal_jsonl_stale_restart_seconds: float = 180.0
     pumpportal_command_template: Optional[str] = None
 
     max_concurrent_coins: int = 2
@@ -686,6 +736,9 @@ class OrchestratorConfig:
     risk_export_root: Path = Path("data/raw/orchestrator/risk_reports")
     risk_http_timeout_seconds: int = 15
     risk_subprocess_timeout_seconds: int = 240
+    red_flag_filter_enabled: bool = True
+    red_flag_config_path: Path = Path("config/red_flags.json")
+    red_flag_delete_rejected_capture_data: bool = True
 
     dexscreener_out_root: Path = Path("data/raw/analytics")
     dexscreener_chain: str = "solana"
@@ -733,6 +786,7 @@ class Metrics:
     coins_started: int = 0
     completed_coin_analyses: int = 0
     failed_coin_analyses: int = 0
+    red_flag_rejected_coin_analyses: int = 0
 
     def to_dict(
         self,
@@ -815,6 +869,14 @@ class DexScreenerResult:
 
 class PipelineError(RuntimeError):
     pass
+
+
+class RedFlagRejected(PipelineError):
+    def __init__(self, mint: str, decision: red_flag_filter.RedFlagDecision):
+        self.mint = mint
+        self.decision = decision
+        reasons = ",".join(str(r.get("code") or r.get("rule")) for r in decision.reject_reasons)
+        super().__init__(f"red flag rejected {mint}: {reasons}")
 
 
 # -----------------------------
@@ -957,12 +1019,23 @@ def load_json_file(path: Path) -> dict[str, Any]:
 
 def save_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
     tmp.write_text(
         json.dumps(make_json_safe(payload), indent=2, sort_keys=True, ensure_ascii=False),
         encoding="utf-8",
     )
-    tmp.replace(path)
+    try:
+        for attempt in range(5):
+            try:
+                tmp.replace(path)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
 
 
 def append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
@@ -1064,6 +1137,16 @@ async def log_stream(
             )
 
 
+def process_is_alive(pid: Optional[int]) -> bool:
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 async def terminate_process(proc: asyncio.subprocess.Process, logger: logging.Logger) -> None:
     if proc.returncode is not None:
         return
@@ -1092,6 +1175,9 @@ async def terminate_process(proc: asyncio.subprocess.Process, logger: logging.Lo
             proc.kill()
     except ProcessLookupError:
         return
+
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
 
 
 async def run_subprocess(
@@ -1173,29 +1259,30 @@ async def run_subprocess(
     )
 
     try:
-        returncode = await asyncio.wait_for(proc.wait(), timeout=timeout_seconds)
-    except asyncio.TimeoutError as exc:
-        await terminate_process(proc, logger)
+        try:
+            returncode = await asyncio.wait_for(proc.wait(), timeout=timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            await terminate_process(proc, logger)
+            elapsed = time.monotonic() - started
+            logger.error(
+                "subprocess_timeout",
+                extra={
+                    "event": "subprocess_timeout",
+                    "coin": mint,
+                    "stage": stage,
+                    "elapsed_seconds": round(elapsed, 3),
+                    "timeout_seconds": timeout_seconds,
+                    "command": safe_cmd,
+                },
+            )
+            raise PipelineError(f"{stage} timed out after {timeout_seconds}s") from exc
+        except asyncio.CancelledError:
+            await terminate_process(proc, logger)
+            raise
+    finally:
         await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
         if stage_log_file is not None:
             stage_log_file.close()
-        elapsed = time.monotonic() - started
-        logger.error(
-            "subprocess_timeout",
-            extra={
-                "event": "subprocess_timeout",
-                "coin": mint,
-                "stage": stage,
-                "elapsed_seconds": round(elapsed, 3),
-                "timeout_seconds": timeout_seconds,
-                "command": safe_cmd,
-            },
-        )
-        raise PipelineError(f"{stage} timed out after {timeout_seconds}s") from exc
-
-    await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
-    if stage_log_file is not None:
-        stage_log_file.close()
 
     elapsed = time.monotonic() - started
     logger.info(
@@ -1235,6 +1322,7 @@ class MemeCoinPipelineOrchestrator:
         self.completed_mints: set[str] = set()
         self.failed_mints: set[str] = set()
         self.skipped_mints: set[str] = set()
+        self.red_flag_rejected_mints: set[str] = set()
         self.active_tasks: dict[str, asyncio.Task[None]] = {}
         self.current_stage: dict[str, str] = {}
         self.post_migration_dex_tracks: dict[str, PostMigrationDexTrack] = {}
@@ -1245,8 +1333,8 @@ class MemeCoinPipelineOrchestrator:
     @property
     def terminal_mints(self) -> set[str]:
         if self.config.retry_failed:
-            return self.completed_mints | self.skipped_mints
-        return self.completed_mints | self.failed_mints | self.skipped_mints
+            return self.completed_mints | self.skipped_mints | self.red_flag_rejected_mints
+        return self.completed_mints | self.failed_mints | self.skipped_mints | self.red_flag_rejected_mints
 
     def active_post_migration_dex_tracks(self) -> list[PostMigrationDexTrack]:
         now_epoch = time.time()
@@ -1304,6 +1392,7 @@ class MemeCoinPipelineOrchestrator:
         self.completed_mints = set(map(str, state.get("completed_mints", [])))
         self.failed_mints = set(map(str, state.get("failed_mints", [])))
         self.skipped_mints = set(map(str, state.get("skipped_mints", [])))
+        self.red_flag_rejected_mints = set(map(str, state.get("red_flag_rejected_mints", [])))
         now_epoch = time.time()
         self.post_migration_dex_tracks = {}
         for item in state.get("post_migration_dex_tracks", []) or []:
@@ -1324,6 +1413,7 @@ class MemeCoinPipelineOrchestrator:
                 "completed_mints": len(self.completed_mints),
                 "failed_mints": len(self.failed_mints),
                 "skipped_mints": len(self.skipped_mints),
+                "red_flag_rejected_mints": len(self.red_flag_rejected_mints),
                 "post_migration_dex_tracks": len(self.post_migration_dex_tracks),
             },
         )
@@ -1338,6 +1428,7 @@ class MemeCoinPipelineOrchestrator:
             "completed_mints": sorted(self.completed_mints),
             "failed_mints": sorted(self.failed_mints),
             "skipped_mints": sorted(self.skipped_mints),
+            "red_flag_rejected_mints": sorted(self.red_flag_rejected_mints),
             "post_migration_dex_tracks": [
                 track.to_dict()
                 for track in sorted(self.active_post_migration_dex_tracks(), key=lambda item: item.mint)
@@ -1362,6 +1453,8 @@ class MemeCoinPipelineOrchestrator:
         }
 
         missing = {name: str(path) for name, path in script_paths.items() if not path.exists()}
+        if self.config.red_flag_filter_enabled and not self.config.red_flag_config_path.exists():
+            missing["red_flag_config_path"] = str(self.config.red_flag_config_path)
         if missing and not self.config.dry_run:
             raise FileNotFoundError(f"Missing script path(s): {missing}")
         if missing and self.config.dry_run:
@@ -1508,6 +1601,162 @@ class MemeCoinPipelineOrchestrator:
         ]
         return proc, tasks, stage_log_file
 
+    async def stop_pumpportal_worker(
+        self,
+        proc: Optional[asyncio.subprocess.Process],
+        log_tasks: list[asyncio.Task[None]],
+        log_file: Optional[TextIO],
+    ) -> None:
+        if proc is not None and proc.returncode is None:
+            await terminate_process(proc, self.logger)
+        for task in log_tasks:
+            task.cancel()
+        if log_tasks:
+            await asyncio.gather(*log_tasks, return_exceptions=True)
+        if log_file is not None:
+            with contextlib.suppress(Exception):
+                log_file.close()
+
+    async def ensure_pumpportal_jsonl_ready(
+        self,
+        proc: Optional[asyncio.subprocess.Process],
+    ) -> None:
+        if self._pumpportal_jsonl_ready:
+            return
+
+        path = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
+        if path.exists():
+            self._pumpportal_jsonl_ready = True
+            self.logger.info(
+                "pumpportal_jsonl_ready",
+                extra={"event": "pumpportal_jsonl_ready", "path": str(path)},
+            )
+            return
+
+        await self.wait_for_pumpportal_jsonl(proc)
+
+    def _pumpportal_jsonl_age_seconds(self) -> Optional[float]:
+        path = resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)
+        if not path.exists():
+            return None
+        return max(0.0, time.time() - path.stat().st_mtime)
+
+    async def supervise_pumpportal(self) -> None:
+        """Keep pumpportal_ws.py running; restart after unexpected exits."""
+        restarts = 0
+        stale_threshold = max(0.0, self.config.pumpportal_jsonl_stale_restart_seconds)
+
+        while not self.shutdown_event.is_set():
+            proc, log_tasks, log_file = await self.start_pumpportal_process()
+            exit_code: Optional[int] = None
+            startup_error: Optional[BaseException] = None
+            wait_task = asyncio.create_task(proc.wait())
+
+            try:
+                await self.ensure_pumpportal_jsonl_ready(proc)
+
+                while not self.shutdown_event.is_set():
+                    if wait_task.done():
+                        exit_code = wait_task.result()
+                        break
+
+                    if stale_threshold > 0:
+                        jsonl_age = self._pumpportal_jsonl_age_seconds()
+                        if jsonl_age is not None and jsonl_age >= stale_threshold:
+                            if not process_is_alive(proc.pid):
+                                self.logger.warning(
+                                    "pumpportal_process_dead_stale_jsonl",
+                                    extra={
+                                        "event": "pumpportal_process_dead_stale_jsonl",
+                                        "jsonl_age_seconds": round(jsonl_age, 1),
+                                        "pid": proc.pid,
+                                    },
+                                )
+                                self.emit_status_event(
+                                    "pumpportal_process_dead_stale_jsonl",
+                                    jsonl_age_seconds=round(jsonl_age, 1),
+                                    pid=proc.pid,
+                                )
+                                await terminate_process(proc, self.logger)
+                                with contextlib.suppress(asyncio.TimeoutError):
+                                    exit_code = await asyncio.wait_for(wait_task, timeout=10.0)
+                                if exit_code is None:
+                                    exit_code = proc.returncode if proc.returncode is not None else -1
+                                break
+
+                    await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                startup_error = exc
+                if wait_task.done():
+                    exit_code = wait_task.result()
+                else:
+                    exit_code = proc.returncode
+            finally:
+                if not wait_task.done():
+                    wait_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await wait_task
+                await self.stop_pumpportal_worker(proc, log_tasks, log_file)
+
+            if self.shutdown_event.is_set():
+                return
+
+            if exit_code is None and startup_error is None:
+                continue
+
+            if not self.config.pumpportal_auto_restart:
+                if startup_error is not None:
+                    raise startup_error
+                self.logger.error(
+                    "pumpportal_process_exited_no_restart",
+                    extra={
+                        "event": "pumpportal_process_exited_no_restart",
+                        "return_code": exit_code,
+                    },
+                )
+                self.emit_status_event(
+                    "pumpportal_process_exited_no_restart",
+                    return_code=exit_code,
+                )
+                return
+
+            restarts += 1
+            delay = max(0.0, self.config.pumpportal_restart_delay_seconds)
+            if startup_error is not None:
+                self.logger.warning(
+                    "pumpportal_startup_failed",
+                    extra={
+                        "event": "pumpportal_startup_failed",
+                        "error": repr(startup_error),
+                        "return_code": exit_code,
+                        "restart_count": restarts,
+                        "restart_delay_seconds": delay,
+                    },
+                )
+            else:
+                self.logger.warning(
+                    "pumpportal_process_exited",
+                    extra={
+                        "event": "pumpportal_process_exited",
+                        "return_code": exit_code,
+                        "restart_count": restarts,
+                        "restart_delay_seconds": delay,
+                    },
+                )
+                self.emit_status_event(
+                    "pumpportal_process_exited",
+                    return_code=exit_code,
+                    restart_count=restarts,
+                    restart_delay_seconds=delay,
+                )
+
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                raise
+
     async def run(self) -> None:
         self.validate_script_paths()
         self.validate_pumpportal_jsonl_setup()
@@ -1515,16 +1764,30 @@ class MemeCoinPipelineOrchestrator:
 
         metrics_task = asyncio.create_task(self.metrics_reporter())
         post_migration_dex_task = asyncio.create_task(self.post_migration_dex_scheduler())
-        pumpportal_proc: Optional[asyncio.subprocess.Process] = None
-        pumpportal_log_tasks: list[asyncio.Task[None]] = []
-        pumpportal_log_file: Optional[TextIO] = None
+        pumpportal_supervisor_task: Optional[asyncio.Task[None]] = None
 
         try:
             if self.config.run_pumpportal and not self.config.dry_run:
-                pumpportal_proc, pumpportal_log_tasks, pumpportal_log_file = (
-                    await self.start_pumpportal_process()
+                pumpportal_supervisor_task = asyncio.create_task(self.supervise_pumpportal())
+                ready_deadline = (
+                    time.monotonic() + self.config.pumpportal_jsonl_wait_seconds
                 )
-                await self.wait_for_pumpportal_jsonl(pumpportal_proc)
+                while (
+                    not self._pumpportal_jsonl_ready
+                    and time.monotonic() < ready_deadline
+                    and not self.shutdown_event.is_set()
+                ):
+                    await asyncio.sleep(0.25)
+
+                if (
+                    not self._pumpportal_jsonl_ready
+                    and not self.shutdown_event.is_set()
+                ):
+                    raise TimeoutError(
+                        f"Timed out after {self.config.pumpportal_jsonl_wait_seconds:.0f}s "
+                        f"waiting for PumpPortal JSONL at "
+                        f"{resolve_pumpportal_jsonl_path(self.config.pumpportal_jsonl_path)}."
+                    )
 
             self.apply_start_at_end_if_needed()
 
@@ -1534,11 +1797,10 @@ class MemeCoinPipelineOrchestrator:
                 await self.wait_for_active_tasks()
         finally:
             self.shutdown_event.set()
-            if pumpportal_proc is not None:
-                await terminate_process(pumpportal_proc, self.logger)
-                await asyncio.gather(*pumpportal_log_tasks, return_exceptions=True)
-                if pumpportal_log_file is not None:
-                    pumpportal_log_file.close()
+
+            if pumpportal_supervisor_task is not None:
+                pumpportal_supervisor_task.cancel()
+                await asyncio.gather(pumpportal_supervisor_task, return_exceptions=True)
 
             metrics_task.cancel()
             post_migration_dex_task.cancel()
@@ -1762,6 +2024,7 @@ class MemeCoinPipelineOrchestrator:
                     "skipped": mint in self.skipped_mints,
                     "completed": mint in self.completed_mints,
                     "failed": mint in self.failed_mints,
+                    "red_flag_rejected": mint in self.red_flag_rejected_mints,
                     "retry_failed_enabled": self.config.retry_failed,
                 },
             )
@@ -1849,6 +2112,26 @@ class MemeCoinPipelineOrchestrator:
             )
             self.emit_status_event("coin_pipeline_cancelled", mint=ctx.mint)
             raise
+        except RedFlagRejected as exc:
+            self.current_stage[ctx.mint] = "red_flag_rejected"
+            self.red_flag_rejected_mints.add(ctx.mint)
+            self.metrics.red_flag_rejected_coin_analyses += 1
+            decision = exc.decision.to_dict()
+            self.logger.info(
+                "coin_pipeline_red_flag_rejected",
+                extra={
+                    "event": "coin_pipeline_red_flag_rejected",
+                    "coin": ctx.mint,
+                    "decision": decision,
+                    "red_flag_rejected_coin_analyses": self.metrics.red_flag_rejected_coin_analyses,
+                },
+            )
+            self.emit_status_event(
+                "coin_pipeline_red_flag_rejected",
+                mint=ctx.mint,
+                decision=decision,
+                red_flag_rejected_coin_analyses=self.metrics.red_flag_rejected_coin_analyses,
+            )
         except Exception as exc:
             self.current_stage[ctx.mint] = "failed"
             self.failed_mints.add(ctx.mint)
@@ -1884,11 +2167,62 @@ class MemeCoinPipelineOrchestrator:
             self.active_tasks.pop(ctx.mint, None)
             self.save_state()
 
+    def _set_pipeline_stage(self, mint: str, stage: str) -> None:
+        """Keep solana_1h_capture as the dashboard stage while capture is running."""
+        if self.current_stage.get(mint) == "solana_1h_capture":
+            return
+        self.current_stage[mint] = stage
+
+    def _record_analytics_failure(self, ctx: CoinContext, exc: BaseException) -> None:
+        self.logger.error(
+            "coin_analytics_failed",
+            extra={
+                "event": "coin_analytics_failed",
+                "coin": ctx.mint,
+                "error": repr(exc),
+                "traceback": traceback.format_exc(),
+            },
+        )
+        self.emit_status_event("coin_analytics_failed", mint=ctx.mint, error=repr(exc))
+
     async def run_coin_pipeline(self, ctx: CoinContext) -> None:
-        await self.run_capture(ctx)
+        capture_task = asyncio.create_task(self.run_capture(ctx))
+        await asyncio.sleep(0)
+
+        try:
+            await self.run_risk_report(ctx)
+            security_report = self.load_security_report(ctx.mint)
+            decision = self.evaluate_red_flag_filter(ctx, security_report)
+        except BaseException:
+            if capture_task.done():
+                await asyncio.gather(capture_task, return_exceptions=True)
+            else:
+                capture_task.cancel()
+                await asyncio.gather(capture_task, return_exceptions=True)
+            raise
+
+        if decision.rejected:
+            await self.cancel_capture_task(ctx, capture_task)
+            self.delete_rejected_capture_data(ctx.mint)
+            raise RedFlagRejected(ctx.mint, decision)
+
         self.start_post_migration_dex_tracking(ctx)
-        await self.run_risk_report(ctx)
-        dex_result = await self.poll_dexscreener(ctx)
+        analytics_task = asyncio.create_task(self.run_analytics_branch(ctx))
+
+        capture_results = await asyncio.gather(capture_task, return_exceptions=True)
+        capture_error = capture_results[0]
+        analytics_results = await asyncio.gather(analytics_task, return_exceptions=True)
+        analytics_error = analytics_results[0]
+        if isinstance(capture_error, BaseException):
+            raise capture_error
+        if isinstance(analytics_error, BaseException):
+            self._record_analytics_failure(ctx, analytics_error)
+
+    async def run_analytics_branch(self, ctx: CoinContext) -> None:
+        try:
+            dex_result = await self.poll_dexscreener(ctx)
+        except BaseException:
+            raise
 
         enrichment_tasks: list[asyncio.Task[None]] = []
         if dex_result.website_url:
@@ -1896,7 +2230,6 @@ class MemeCoinPipelineOrchestrator:
                 asyncio.create_task(self.run_website_grader(ctx, dex_result))
             )
         else:
-            self.current_stage[ctx.mint] = "website_grader_skipped_no_website"
             self.logger.info(
                 "website_grader_skipped_no_website",
                 extra={
@@ -1920,8 +2253,12 @@ class MemeCoinPipelineOrchestrator:
                 },
             )
 
-        if enrichment_tasks:
-            await asyncio.gather(*enrichment_tasks)
+        pending = [*enrichment_tasks]
+        if pending:
+            results = await asyncio.gather(*pending, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
 
     def start_post_migration_dex_tracking(self, ctx: CoinContext) -> None:
         if (
@@ -2162,9 +2499,9 @@ class MemeCoinPipelineOrchestrator:
 
     async def run_risk_report(self, ctx: CoinContext) -> None:
         stage = "solana_risk_report"
-        self.current_stage[ctx.mint] = stage
+        self._set_pipeline_stage(ctx.mint, stage)
 
-        risk_export_path = self.config.risk_export_root / f"{ctx.mint}.json"
+        risk_export_path = self.risk_report_export_path(ctx.mint)
 
         default_command = [
             self.config.python_executable,
@@ -2205,9 +2542,97 @@ class MemeCoinPipelineOrchestrator:
             stage_log_path=self.stage_log_path(ctx.mint, stage),
         )
 
+    def risk_report_export_path(self, mint: str) -> Path:
+        return self.config.risk_export_root / f"{mint}.json"
+
+    def load_security_report(self, mint: str) -> dict[str, Any]:
+        path = self.risk_report_export_path(mint)
+        data = load_json_file(path)
+        if not isinstance(data, dict):
+            raise PipelineError(f"security report is not a JSON object: {path}")
+        return data
+
+    def evaluate_red_flag_filter(
+        self,
+        ctx: CoinContext,
+        security_report: Mapping[str, Any],
+        dex_features: Optional[Mapping[str, Any]] = None,
+    ) -> red_flag_filter.RedFlagDecision:
+        stage = "red_flag_filter"
+        self._set_pipeline_stage(ctx.mint, stage)
+
+        if not self.config.red_flag_filter_enabled:
+            decision = red_flag_filter.RedFlagDecision(
+                accepted=True,
+                rejected=False,
+                reject_reasons=[],
+                passed_rules=[],
+                skipped_rules=[{"rule": "red_flag_filter", "reason": "disabled"}],
+                missing_required_data=[],
+                evaluated_at_utc=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            )
+            self.logger.info(
+                "red_flag_filter_skipped",
+                extra={"event": "red_flag_filter_skipped", "coin": ctx.mint, "decision": decision.to_dict()},
+            )
+            self.emit_status_event("red_flag_filter_skipped", mint=ctx.mint, decision=decision.to_dict())
+            return decision
+
+        cfg = red_flag_filter.load_red_flag_config(self.config.red_flag_config_path)
+        decision = red_flag_filter.evaluate_red_flags(
+            security_report=security_report,
+            dex_features=dex_features,
+            config=cfg,
+        )
+        event = "red_flag_filter_rejected" if decision.rejected else "red_flag_filter_accepted"
+        self.logger.info(
+            event,
+            extra={"event": event, "coin": ctx.mint, "decision": decision.to_dict()},
+        )
+        self.emit_status_event(event, mint=ctx.mint, decision=decision.to_dict())
+        return decision
+
+    async def cancel_capture_task(self, ctx: CoinContext, capture_task: asyncio.Task[None]) -> None:
+        if capture_task.done():
+            await asyncio.gather(capture_task, return_exceptions=True)
+            return
+        capture_task.cancel()
+        await asyncio.gather(capture_task, return_exceptions=True)
+        self.logger.info(
+            "capture_cancelled_for_red_flag",
+            extra={"event": "capture_cancelled_for_red_flag", "coin": ctx.mint},
+        )
+        self.emit_status_event("capture_cancelled_for_red_flag", mint=ctx.mint)
+
+    def delete_rejected_capture_data(self, mint: str) -> Optional[Path]:
+        if not self.config.red_flag_delete_rejected_capture_data:
+            return None
+
+        root = self.config.capture_out_root.expanduser().resolve()
+        target = (self.config.capture_out_root / mint).expanduser().resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise PipelineError(f"Refusing to delete capture data outside capture root: {target}") from exc
+        if target == root:
+            raise PipelineError(f"Refusing to delete capture root itself: {target}")
+
+        if not target.exists():
+            return target
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        self.logger.info(
+            "red_flag_rejected_capture_data_deleted",
+            extra={"event": "red_flag_rejected_capture_data_deleted", "coin": mint, "path": str(target)},
+        )
+        self.emit_status_event("red_flag_rejected_capture_data_deleted", mint=mint, path=str(target))
+        return target
+
     async def poll_dexscreener(self, ctx: CoinContext) -> DexScreenerResult:
         stage = "dexscreener_poll"
-        self.current_stage[ctx.mint] = stage
+        self._set_pipeline_stage(ctx.mint, stage)
 
         if self.config.dry_run:
             features_path = self.dex_features_path(ctx.mint)
@@ -2459,7 +2884,7 @@ class MemeCoinPipelineOrchestrator:
 
     async def run_website_grader(self, ctx: CoinContext, dex_result: DexScreenerResult) -> None:
         stage = "website_grader"
-        self.current_stage[ctx.mint] = stage
+        self._set_pipeline_stage(ctx.mint, stage)
         website_url = dex_result.website_url
         if not website_url:
             raise PipelineError("website_grader called without a website URL")
@@ -2522,7 +2947,7 @@ class MemeCoinPipelineOrchestrator:
 
     async def run_telegram_info(self, ctx: CoinContext, telegram_url: str) -> None:
         stage = "telegram_info"
-        self.current_stage[ctx.mint] = stage
+        self._set_pipeline_stage(ctx.mint, stage)
 
         default_command = [
             self.config.python_executable,
@@ -2720,6 +3145,26 @@ def build_parser(config_defaults: Optional[Mapping[str, Any]] = None) -> argpars
         default=120.0,
         help="Max seconds to wait for pumpportal_ws.py to create --pumpportal-jsonl after launch.",
     )
+    parser.add_argument(
+        "--no-pumpportal-auto-restart",
+        action="store_true",
+        help="Do not restart pumpportal_ws.py when the subprocess exits unexpectedly.",
+    )
+    parser.add_argument(
+        "--pumpportal-restart-delay-seconds",
+        type=float,
+        default=5.0,
+        help="Delay before relaunching pumpportal_ws.py after an unexpected exit.",
+    )
+    parser.add_argument(
+        "--pumpportal-jsonl-stale-restart-seconds",
+        type=float,
+        default=180.0,
+        help=(
+            "If the migrations JSONL has not been modified for this many seconds and the "
+            "PumpPortal PID is gone, force a supervisor restart (0 disables)."
+        ),
+    )
 
     parser.add_argument("--max-concurrent-coins", type=int, default=2)
     parser.add_argument("--scan-poll-seconds", type=float, default=2.0)
@@ -2759,6 +3204,9 @@ def build_parser(config_defaults: Optional[Mapping[str, Any]] = None) -> argpars
     parser.add_argument("--risk-export-root", type=Path, default=Path("data/raw/orchestrator/risk_reports"))
     parser.add_argument("--risk-http-timeout-seconds", type=int, default=15)
     parser.add_argument("--risk-subprocess-timeout-seconds", type=int, default=240)
+    parser.add_argument("--no-red-flag-filter", action="store_true", help="Disable the hard-stop red flag filter.")
+    parser.add_argument("--red-flag-config-path", type=Path, default=Path("config/red_flags.json"))
+    parser.add_argument("--keep-red-flag-rejected-capture-data", action="store_true", help="Keep temporary capture data for red-flag rejected coins.")
 
     parser.add_argument("--dexscreener-out-root", type=Path, default=Path("data/raw/analytics"))
     parser.add_argument("--dexscreener-chain", default="solana")
@@ -2813,6 +3261,7 @@ def build_parser(config_defaults: Optional[Mapping[str, Any]] = None) -> argpars
         "capture_out_root",
         "risk_analysis_root",
         "risk_export_root",
+        "red_flag_config_path",
         "dexscreener_out_root",
         "post_migration_dex_out_root",
         "website_output_root",
@@ -2840,6 +3289,9 @@ def config_from_args(args: argparse.Namespace) -> OrchestratorConfig:
         pumpportal_duration_seconds=args.pumpportal_duration_seconds,
         pumpportal_display=args.pumpportal_display,
         pumpportal_jsonl_wait_seconds=args.pumpportal_jsonl_wait_seconds,
+        pumpportal_auto_restart=not args.no_pumpportal_auto_restart,
+        pumpportal_restart_delay_seconds=args.pumpportal_restart_delay_seconds,
+        pumpportal_jsonl_stale_restart_seconds=args.pumpportal_jsonl_stale_restart_seconds,
         max_concurrent_coins=args.max_concurrent_coins,
         scan_poll_seconds=args.scan_poll_seconds,
         metrics_log_seconds=args.metrics_log_seconds,
@@ -2866,6 +3318,14 @@ def config_from_args(args: argparse.Namespace) -> OrchestratorConfig:
         risk_export_root=args.risk_export_root,
         risk_http_timeout_seconds=args.risk_http_timeout_seconds,
         risk_subprocess_timeout_seconds=args.risk_subprocess_timeout_seconds,
+        red_flag_filter_enabled=(
+            bool(getattr(args, "red_flag_filter_enabled", True)) and not args.no_red_flag_filter
+        ),
+        red_flag_config_path=args.red_flag_config_path,
+        red_flag_delete_rejected_capture_data=(
+            bool(getattr(args, "red_flag_delete_rejected_capture_data", True))
+            and not args.keep_red_flag_rejected_capture_data
+        ),
         dexscreener_out_root=args.dexscreener_out_root,
         dexscreener_chain=args.dexscreener_chain,
         dexscreener_initial_wait_seconds=args.dexscreener_initial_wait_seconds,
@@ -2913,6 +3373,17 @@ async def async_main(argv: Optional[Sequence[str]] = None) -> int:
         await orchestrator.run()
         return 0
     except Exception as exc:
+        if not getattr(args, "no_status_jsonl", False):
+            with contextlib.suppress(Exception):
+                append_jsonl(
+                    args.status_jsonl_path,
+                    {
+                        "ts_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "event_type": "orchestrator_fatal_error",
+                        "error": repr(exc),
+                        "traceback": traceback.format_exc(),
+                    },
+                )
         logger.error(
             "orchestrator_fatal_error",
             extra={
@@ -2920,6 +3391,7 @@ async def async_main(argv: Optional[Sequence[str]] = None) -> int:
                 "error": repr(exc),
                 "traceback": traceback.format_exc(),
             },
+            exc_info=True,
         )
         return 1
 

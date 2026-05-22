@@ -1,0 +1,24 @@
+{
+  "out": "data/raw/onchain",
+  "duration_seconds": 3600,
+  "rpc_min_interval": 1.1,
+  "tx_retry_seconds": 20.0,
+  "max_tx_attempts": 100,
+  "poll_seconds": 20.0,
+  "poll_seconds_connected": 60.0,
+  "backfill_limit": 5,
+  "snapshot_seconds": 0.0,
+  "network_sample_seconds": 60.0,
+  "network_sample_fee_addresses": false,
+  "max_queue_size": 100000,
+  "prefetch_filter_mode": "pump-first",
+  "noise_fetch_sample_per_minute": 2,
+  "write_dropped_ws_full_logs": false,
+  "quote_mint": [
+    "So11111111111111111111111111111111111111112",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+  ],
+  "display_seconds": 10.0,
+  "enable_account_notifications": false,
+  "debug": false
+}

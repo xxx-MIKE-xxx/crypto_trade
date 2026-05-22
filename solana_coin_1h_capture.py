@@ -87,7 +87,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 import requests
 import websockets
@@ -104,6 +104,59 @@ COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
 
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 DEFAULT_CAPTURE_CONFIG_PATH = Path("config/solana_coin_1h_capture.json")
+
+PREFETCH_FILTER_MODES = {"pump-first"}
+PUMP_AMM_HINTS = ("pamm", "pumpswap", "pump-amm")
+TRADE_LOG_HINTS = (
+    "instruction: buy",
+    "instruction: buyexactquotein",
+    "instruction: sellexactbasein",
+    "instruction: sell",
+    "instruction: swap",
+    "transferchecked",
+)
+LIQUIDITY_LOG_HINTS = (
+    "initializepool",
+    "initialize_pool",
+    "create pool",
+    "create_pool",
+    "addliquidity",
+    "add_liquidity",
+    "remove_liquidity",
+    "removeliquidity",
+    "increase liquidity",
+    "decrease liquidity",
+    "deposit",
+    "withdraw",
+    "mint lp",
+    "burn lp",
+)
+FAILED_TRADE_HINTS = (
+    "failed",
+    "slippage",
+    "custom program error",
+    "anchorerror",
+    "belowmin",
+    "would buy less",
+    "would sell less",
+)
+BOT_NOISE_HINTS = (
+    "no arb opportunity",
+    "no arbitrage",
+    "no profitable route",
+    "no arbitrage profit",
+    "no arb",
+    "no profitable",
+    "route",
+    "searcher",
+)
+
+
+@dataclass(frozen=True)
+class PrefetchClassification:
+    category: str
+    reason: str
+    hints: Tuple[str, ...] = ()
 
 
 _ENV_LINE_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$")
@@ -218,6 +271,82 @@ def is_valid_solana_address(value: str) -> bool:
         return len(b58decode(text)) == 32
     except Exception:
         return False
+
+
+def normalize_log_text(logs: Iterable[Any]) -> str:
+    return " ".join(str(item).lower() for item in logs if item is not None)
+
+
+def matching_hints(text: str, hints: Iterable[str]) -> Tuple[str, ...]:
+    return tuple(hint for hint in hints if hint in text)
+
+
+def classify_prefetch_logs(
+    logs: Iterable[Any],
+    *,
+    err: Any = None,
+    mode: str = "pump-first",
+) -> PrefetchClassification:
+    if mode not in PREFETCH_FILTER_MODES:
+        mode = "pump-first"
+
+    text = normalize_log_text(logs)
+    if not text:
+        return PrefetchClassification("irrelevant_noise", "empty_logs")
+
+    liquidity_hints = matching_hints(text, LIQUIDITY_LOG_HINTS)
+    if liquidity_hints:
+        return PrefetchClassification(
+            "liquidity_relevant",
+            "liquidity_or_pool_log_hint",
+            liquidity_hints,
+        )
+
+    trade_hints = matching_hints(text, TRADE_LOG_HINTS)
+    pump_hints = matching_hints(text, PUMP_AMM_HINTS)
+    failed_hints = matching_hints(text, FAILED_TRADE_HINTS)
+    if trade_hints and pump_hints:
+        if err is not None or failed_hints:
+            return PrefetchClassification(
+                "failed_trade_relevant",
+                "pump_trade_with_error_or_failure_hint",
+                tuple(sorted(set(trade_hints + pump_hints + failed_hints))),
+            )
+        return PrefetchClassification(
+            "trade_relevant",
+            "pump_trade_log_hint",
+            tuple(sorted(set(trade_hints + pump_hints))),
+        )
+
+    noise_hints = matching_hints(text, BOT_NOISE_HINTS)
+    if noise_hints:
+        return PrefetchClassification(
+            "bot_noise_sample",
+            "bot_or_router_no_opportunity_hint",
+            noise_hints,
+        )
+
+    return PrefetchClassification("irrelevant_noise", "no_prefetch_relevant_log_hint")
+
+
+def compact_log_hints(logs: Iterable[Any], limit: int = 5) -> List[str]:
+    hints: List[str] = []
+    for item in logs:
+        text = str(item).strip()
+        if not text:
+            continue
+        if (
+            "Instruction:" in text
+            or "No arb" in text
+            or "No profitable" in text
+            or "No arbitrage" in text
+            or "failed" in text.lower()
+            or "slippage" in text.lower()
+        ):
+            hints.append(text[:240])
+        if len(hints) >= limit:
+            break
+    return hints
 
 
 def format_duration(seconds: float) -> str:
@@ -950,6 +1079,9 @@ class Capture:
         network_sample_seconds: float,
         network_sample_fee_addresses: bool,
         max_queue_size: int,
+        prefetch_filter_mode: str,
+        noise_fetch_sample_per_minute: int,
+        write_dropped_ws_full_logs: bool,
         display_seconds: float,
         enable_account_notifications: bool,
         debug: bool,
@@ -972,12 +1104,23 @@ class Capture:
         self.network_sample_seconds = network_sample_seconds
         self.network_sample_fee_addresses = network_sample_fee_addresses
         self.max_queue_size = max_queue_size
+        self.prefetch_filter_mode = (
+            prefetch_filter_mode
+            if prefetch_filter_mode in PREFETCH_FILTER_MODES
+            else "pump-first"
+        )
+        self.noise_fetch_sample_per_minute = max(0, int(noise_fetch_sample_per_minute))
+        self.write_dropped_ws_full_logs = write_dropped_ws_full_logs
         self.display_seconds = display_seconds
         self.enable_account_notifications = enable_account_notifications
 
         self.stop_event = asyncio.Event()
         self.started_at = now_ts()
         self.ws_healthy = False
+        self.noise_bucket_minute: Optional[int] = None
+        self.noise_bucket_used = 0
+        self.ws_count_minute_epoch: Optional[int] = None
+        self.ws_count_bucket: Dict[str, int] = {}
 
         self.paths = {
             "manifest": out_dir / "manifest.json",
@@ -986,6 +1129,8 @@ class Capture:
             "failed": out_dir / "failed_attempts.jsonl",
             "tx_index": out_dir / "tx_index.csv",
             "ws_logs": out_dir / "ws_log_notifications.jsonl",
+            "ws_events": out_dir / "ws_log_events.jsonl",
+            "ws_event_counts": out_dir / "ws_event_counts.jsonl",
             "account_notifications": out_dir / "account_notifications.jsonl",
             "snapshots": out_dir / "account_snapshots.jsonl",
             "discovered_accounts": out_dir / "discovered_token_accounts.jsonl",
@@ -1032,6 +1177,7 @@ class Capture:
         self.signature_first_seen_source: Dict[str, str] = {}
         self.attempts: Dict[str, int] = {}
         self.pending: asyncio.Queue[str] = asyncio.Queue(maxsize=max_queue_size)
+        self.queued_sigs: Set[str] = set()
 
         self.snapshot_accounts: Set[str] = set(watch_addresses)
         self.discovered_token_accounts: Set[str] = set()
@@ -1048,6 +1194,15 @@ class Capture:
             "discovered_token_accounts": 0,
             "pool_events": 0,
             "network_samples": 0,
+            "prefetch_trade_relevant": 0,
+            "prefetch_liquidity_relevant": 0,
+            "prefetch_failed_trade_relevant": 0,
+            "prefetch_bot_noise_sample": 0,
+            "prefetch_irrelevant_noise": 0,
+            "prefetch_queued": 0,
+            "prefetch_dropped": 0,
+            "prefetch_noise_sampled": 0,
+            "prefetch_noise_sample_dropped": 0,
         }
 
         self.load_existing_state()
@@ -1090,6 +1245,9 @@ class Capture:
             "snapshot_seconds": self.snapshot_seconds,
             "network_sample_seconds": self.network_sample_seconds,
             "network_sample_fee_addresses": self.network_sample_fee_addresses,
+            "prefetch_filter_mode": self.prefetch_filter_mode,
+            "noise_fetch_sample_per_minute": self.noise_fetch_sample_per_minute,
+            "write_dropped_ws_full_logs": self.write_dropped_ws_full_logs,
             "tx_retry_seconds": self.tx_retry_seconds,
             "max_tx_attempts": self.max_tx_attempts,
             "enable_account_notifications": self.enable_account_notifications,
@@ -1122,6 +1280,8 @@ class Capture:
                 f"coverage={coverage:.1%} "
                 f"queue={self.pending.qsize()} "
                 f"new_this_run={self.stats['signatures_new_this_run']} "
+                f"prefetch_q={self.stats['prefetch_queued']} "
+                f"prefetch_drop={self.stats['prefetch_dropped']} "
                 f"failed_fetches={self.stats['transactions_failed']} "
                 f"discovered_accounts={len(self.discovered_token_accounts)} "
                 f"pool_events={self.stats['pool_events']} "
@@ -1136,7 +1296,140 @@ class Capture:
             flush=True,
         )
 
-    async def add_signature(self, sig: str, seen_by: str, source: str) -> None:
+    def consume_noise_sample_budget(self, ts_epoch: Optional[float] = None) -> bool:
+        if self.noise_fetch_sample_per_minute <= 0:
+            return False
+
+        minute = int((ts_epoch if ts_epoch is not None else now_ts()) // 60)
+        if self.noise_bucket_minute != minute:
+            self.noise_bucket_minute = minute
+            self.noise_bucket_used = 0
+
+        if self.noise_bucket_used >= self.noise_fetch_sample_per_minute:
+            return False
+
+        self.noise_bucket_used += 1
+        return True
+
+    def record_ws_event_count(self, category: str, fetch_decision: str, ts_epoch: Optional[float] = None) -> None:
+        minute_epoch = int((ts_epoch if ts_epoch is not None else now_ts()) // 60) * 60
+        if self.ws_count_minute_epoch is None:
+            self.ws_count_minute_epoch = minute_epoch
+        elif minute_epoch != self.ws_count_minute_epoch:
+            self.flush_ws_event_counts()
+            self.ws_count_minute_epoch = minute_epoch
+
+        self.ws_count_bucket["total"] = self.ws_count_bucket.get("total", 0) + 1
+        category_key = f"category_{category}"
+        decision_key = f"decision_{fetch_decision}"
+        self.ws_count_bucket[category_key] = self.ws_count_bucket.get(category_key, 0) + 1
+        self.ws_count_bucket[decision_key] = self.ws_count_bucket.get(decision_key, 0) + 1
+
+    def flush_ws_event_counts(self) -> None:
+        if self.ws_count_minute_epoch is None or not self.ws_count_bucket:
+            return
+
+        append_jsonl(
+            self.paths["ws_event_counts"],
+            {
+                "minute_start_utc": datetime.fromtimestamp(
+                    self.ws_count_minute_epoch,
+                    tz=timezone.utc,
+                ).isoformat(),
+                "mint": self.mint,
+                "counts": dict(sorted(self.ws_count_bucket.items())),
+            },
+        )
+        self.ws_count_bucket.clear()
+
+    def decide_ws_prefetch(self, classification: PrefetchClassification) -> Tuple[bool, str, str]:
+        if classification.category in {
+            "trade_relevant",
+            "liquidity_relevant",
+            "failed_trade_relevant",
+        }:
+            return True, "queued", classification.reason
+
+        if classification.category == "bot_noise_sample":
+            if self.consume_noise_sample_budget():
+                self.stats["prefetch_noise_sampled"] += 1
+                return True, "queued_noise_sample", classification.reason
+            self.stats["prefetch_noise_sample_dropped"] += 1
+            return False, "dropped_noise_sample_limit", "noise_sample_budget_exhausted"
+
+        return False, "dropped_filter", classification.reason
+
+    async def process_websocket_log_message(self, addr: str, msg: Mapping[str, Any]) -> None:
+        received_at = now_iso()
+        params = msg.get("params") or {}
+        result = params.get("result") or {}
+        context = result.get("context") or {}
+        value = result.get("value") or {}
+        logs = value.get("logs") or []
+        sig = value.get("signature")
+        classification = classify_prefetch_logs(
+            logs,
+            err=value.get("err"),
+            mode=self.prefetch_filter_mode,
+        )
+        should_fetch, fetch_decision, reason = self.decide_ws_prefetch(classification)
+
+        category_stat = f"prefetch_{classification.category}"
+        if category_stat in self.stats:
+            self.stats[category_stat] += 1
+        if should_fetch:
+            self.stats["prefetch_queued"] += 1
+        else:
+            self.stats["prefetch_dropped"] += 1
+
+        self.record_ws_event_count(classification.category, fetch_decision)
+
+        compact_event = {
+            "received_at": received_at,
+            "address": addr,
+            "signature": sig,
+            "slot": context.get("slot"),
+            "err": value.get("err"),
+            "prefetch_category": classification.category,
+            "prefetch_fetch_decision": fetch_decision,
+            "prefetch_reason": reason,
+            "prefetch_hints": list(classification.hints),
+            "log_hints": compact_log_hints(logs),
+        }
+        append_jsonl(self.paths["ws_events"], compact_event)
+
+        if should_fetch or self.write_dropped_ws_full_logs:
+            append_jsonl(self.paths["ws_logs"], {
+                "received_at": received_at,
+                "address": addr,
+                "prefetch_category": classification.category,
+                "prefetch_fetch_decision": fetch_decision,
+                "prefetch_reason": reason,
+                "message": msg,
+            })
+
+        if sig:
+            await self.add_signature(
+                sig,
+                addr,
+                "websocket_logs",
+                should_enqueue=should_fetch,
+                prefetch_category=classification.category,
+                prefetch_fetch_decision=fetch_decision,
+                prefetch_reason=reason,
+            )
+
+    async def add_signature(
+        self,
+        sig: str,
+        seen_by: str,
+        source: str,
+        *,
+        should_enqueue: bool = True,
+        prefetch_category: str = "unfiltered",
+        prefetch_fetch_decision: str = "queued",
+        prefetch_reason: str = "",
+    ) -> None:
         if not sig:
             return
 
@@ -1157,11 +1450,20 @@ class Capture:
                 "signature": sig,
                 "seen_by": seen_by,
                 "source": source,
+                "prefetch_category": prefetch_category,
+                "prefetch_fetch_decision": prefetch_fetch_decision,
+                "prefetch_reason": prefetch_reason,
             })
 
-        if sig not in self.fetched_sigs and self.attempts.get(sig, 0) < self.max_tx_attempts:
+        if (
+            should_enqueue
+            and sig not in self.fetched_sigs
+            and sig not in self.queued_sigs
+            and self.attempts.get(sig, 0) < self.max_tx_attempts
+        ):
             try:
                 self.pending.put_nowait(sig)
+                self.queued_sigs.add(sig)
             except asyncio.QueueFull:
                 append_jsonl(self.paths["failed"], {
                     "failed_at": now_iso(),
@@ -1229,15 +1531,7 @@ class Capture:
                         kind, addr = sub_id_to_target.get(sub_id, ("unknown", f"sub_{sub_id}"))
 
                         if msg.get("method") == "logsNotification":
-                            append_jsonl(self.paths["ws_logs"], {
-                                "received_at": now_iso(),
-                                "address": addr,
-                                "message": msg,
-                            })
-                            value = (params.get("result") or {}).get("value") or {}
-                            sig = value.get("signature")
-                            if sig:
-                                await self.add_signature(sig, addr, "websocket_logs")
+                            await self.process_websocket_log_message(addr, msg)
 
                         elif msg.get("method") == "accountNotification":
                             self.stats["account_notifications"] += 1
@@ -1282,7 +1576,14 @@ class Capture:
                 for row in res.result or []:
                     sig = row.get("signature")
                     if sig:
-                        await self.add_signature(sig, addr, "poll_getSignaturesForAddress")
+                        await self.add_signature(
+                            sig,
+                            addr,
+                            "poll_getSignaturesForAddress",
+                            prefetch_category="poll_backfill",
+                            prefetch_fetch_decision="queued",
+                            prefetch_reason="backfill_without_logs",
+                        )
 
             sleep_for = (
                 self.poll_seconds_connected
@@ -1297,6 +1598,8 @@ class Capture:
                 sig = await asyncio.wait_for(self.pending.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
+
+            self.queued_sigs.discard(sig)
 
             if sig in self.fetched_sigs:
                 self.pending.task_done()
@@ -1391,6 +1694,7 @@ class Capture:
         if not self.stop_event.is_set() and sig not in self.fetched_sigs:
             try:
                 self.pending.put_nowait(sig)
+                self.queued_sigs.add(sig)
             except asyncio.QueueFull:
                 append_jsonl(self.paths["failed"], {
                     "failed_at": now_iso(),
@@ -1535,6 +1839,8 @@ class Capture:
                 "tx_features": str(self.paths["tx_features"]),
                 "pool_events": str(self.paths["pool_events"]),
                 "network_samples": str(self.paths["network_samples"]),
+                "ws_events": str(self.paths["ws_events"]),
+                "ws_event_counts": str(self.paths["ws_event_counts"]),
             },
             "rpc_stats": self.rpc_pool.stats(),
             "viability": {
@@ -1581,6 +1887,8 @@ class Capture:
             stop_deadline = now_ts() + 15
             while not self.pending.empty() and now_ts() < stop_deadline:
                 await asyncio.sleep(0.5)
+
+            self.flush_ws_event_counts()
 
             for t in tasks:
                 t.cancel()
@@ -1631,6 +1939,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--network-sample-seconds", type=float, default=60.0, help="Sparse congestion/fee sampling interval. Use 0 to disable.")
     parser.add_argument("--network-sample-fee-addresses", action="store_true", help="Pass watched addresses to getRecentPrioritizationFees. Default samples global fee pressure.")
     parser.add_argument("--max-queue-size", type=int, default=100000)
+    parser.add_argument("--prefetch-filter-mode", choices=sorted(PREFETCH_FILTER_MODES), default="pump-first", help="Pre-fetch WebSocket log filter used before getTransaction queueing.")
+    parser.add_argument("--noise-fetch-sample-per-minute", type=int, default=2, help="Maximum no-arb/router noise signatures per minute to fetch as full transactions.")
+    parser.add_argument("--write-dropped-ws-full-logs", action="store_true", help="Also write full raw WebSocket messages for dropped noise. Default writes compact events only.")
     parser.add_argument("--quote-mint", action="append", default=[WSOL_MINT, USDC_MINT])
     parser.add_argument("--display-seconds", type=float, default=10.0, help="CLI progress display interval. Use 0 to disable.")
     parser.add_argument("--enable-account-notifications", action="store_true", help="Subscribe to account notifications over websocket. Disabled by default to save streaming credits.")
@@ -1684,6 +1995,9 @@ async def async_main() -> int:
         network_sample_seconds=args.network_sample_seconds,
         network_sample_fee_addresses=args.network_sample_fee_addresses,
         max_queue_size=args.max_queue_size,
+        prefetch_filter_mode=args.prefetch_filter_mode,
+        noise_fetch_sample_per_minute=args.noise_fetch_sample_per_minute,
+        write_dropped_ws_full_logs=args.write_dropped_ws_full_logs,
         display_seconds=args.display_seconds,
         enable_account_notifications=args.enable_account_notifications,
         debug=args.debug,
@@ -1714,7 +2028,7 @@ async def async_main() -> int:
     print(
         (
             "Progress format: elapsed remaining seen fetched coverage queue "
-            "new_this_run failed_fetches discovered_accounts snapshots tx_rate rpc stats out"
+            "new_this_run prefetch_q prefetch_drop failed_fetches discovered_accounts snapshots tx_rate rpc stats out"
         ),
         flush=True,
     )

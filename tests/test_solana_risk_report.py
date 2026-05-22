@@ -74,7 +74,21 @@ def _dex_pair() -> dict:
 
 
 def _defade_payload() -> dict:
-    return {"rugScore": 30}
+    return {
+        "success": True,
+        "token": {"name": "Example", "symbol": "EX", "mint": SAMPLE_MINT},
+        "rugScore": 30,
+        "riskLevel": "MEDIUM",
+        "analysis": {
+            "liquidity": {"totalUsd": 485000, "locked": True, "lockPct": 66},
+            "holders": {"total": 1823, "top10Pct": 34.2},
+            "bundles": {"count": 3, "bundledPct": 8.4},
+            "insiderNetwork": {"insiderCount": 6, "networkScore": 72},
+            "smartMoney": {"buys": 4, "sells": 1, "netFlow": "bullish"},
+            "snipers": {"count": 7, "pct": 4.2},
+            "devTracker": {"previousTokens": 3, "rugHistory": 1},
+        },
+    }
 
 
 def _goplus_token_payload() -> dict:
@@ -290,6 +304,65 @@ def test_fetch_defade_with_key(monkeypatch):
     assert defade_call["url"] == f"{srr.DEFADE_BASE}/v1/analyze/{SAMPLE_MINT}"
     assert defade_call["headers"]["x-api-key"] == "defade-test-key"
     assert result.success is True
+    assert result.data["rugScore"] == 30
+    assert result.data["insiderScore"] == 72
+    assert result.data["bundleScore"] == 8.4
+    assert result.data["sniperScore"] == 4.2
+    assert result.raw["analysis"]["holders"]["total"] == 1823
+
+
+def test_normalize_defade_analyze_response_documented_shape():
+    normalized = srr.normalize_defade_analyze_response(_defade_payload())
+    assert normalized is not None
+    assert normalized["rugScore"] == 30
+    assert normalized["riskLevel"] == "MEDIUM"
+    assert normalized["insiderScore"] == 72
+    assert normalized["bundleScore"] == 8.4
+    assert normalized["sniperScore"] == 4.2
+    assert normalized["holderScore"] == 34.2
+    assert normalized["holderCount"] == 1823
+
+
+def test_normalize_defade_analyze_response_legacy_risk_block():
+    normalized = srr.normalize_defade_analyze_response(
+        {
+            "success": True,
+            "token": {"mint": SAMPLE_MINT},
+            "risk": {"score": 49, "rating": "HIGH RISK"},
+            "holders": {
+                "totalHolders": 20,
+                "concentration": {"top10": 15.63},
+                "bundles": {"bundlePct": "14.04"},
+            },
+        }
+    )
+    assert normalized is not None
+    assert normalized["rugScore"] == 49
+    assert normalized["riskLevel"] == "HIGH"
+    assert normalized["bundleScore"] == 14.04
+    assert normalized["holderScore"] == 15.63
+    assert normalized["holderCount"] == 20
+
+
+def test_normalize_defade_analyze_response_error_body():
+    assert srr.normalize_defade_analyze_response(
+        {"error": "Too many scans. Please wait a minute."}
+    ) is None
+    assert srr.normalize_defade_analyze_response({"success": False}) is None
+
+
+def test_fetch_defade_api_error_in_200_body(monkeypatch):
+    def fake_get(url: str, headers=None, params=None, timeout=15, **kwargs):
+        if "defade.org" in url:
+            return _mock_http_response({"error": "Too many scans"})
+        return _mock_http_response(None, status_code=404)
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    client = srr.RiskReportClient(make_config())
+    result = client.fetch_defade(SAMPLE_MINT)
+    assert result.success is False
+    assert result.error_type == "api_error"
+    assert "Too many scans" in (result.error_message or "")
 
 
 def test_fetch_goplus_missing_keys():

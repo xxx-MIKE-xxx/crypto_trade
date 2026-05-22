@@ -393,6 +393,84 @@ def _missing_key_result(source: str) -> SourceResult:
     )
 
 
+def defade_analyze_error_message(payload: Mapping[str, Any]) -> Optional[str]:
+    """Return a human-readable error from a Defade /v1/analyze JSON body, if any."""
+    err = payload.get("error")
+    if isinstance(err, str) and err.strip():
+        return err.strip()
+    if payload.get("success") is False:
+        return "analysis unsuccessful"
+    return None
+
+
+def normalize_defade_analyze_response(raw: Any) -> Optional[Dict[str, Any]]:
+    """
+    Map Defade GET /v1/analyze/:mint JSON to the flat fields used by scoring.
+
+    Documented response: rugScore, riskLevel, token, analysis.{holders,bundles,...}
+    Also accepts legacy envelopes with risk.score and holders.bundles.bundlePct.
+    """
+    if not isinstance(raw, dict):
+        return None
+    if defade_analyze_error_message(raw):
+        return None
+
+    analysis = raw.get("analysis") if isinstance(raw.get("analysis"), dict) else {}
+    token = raw.get("token") if isinstance(raw.get("token"), dict) else {}
+    raw_holders = raw.get("holders") if isinstance(raw.get("holders"), dict) else {}
+
+    rug_score = as_float(raw.get("rugScore"))
+    risk_level = raw.get("riskLevel")
+    risk_block = raw.get("risk") if isinstance(raw.get("risk"), dict) else {}
+    if rug_score is None:
+        rug_score = as_float(risk_block.get("score"))
+    if risk_level is None:
+        rating = risk_block.get("rating")
+        if isinstance(rating, str) and rating.strip():
+            risk_level = rating.strip().split()[0].upper()
+
+    holders = analysis.get("holders") if isinstance(analysis.get("holders"), dict) else {}
+    bundles = analysis.get("bundles") if isinstance(analysis.get("bundles"), dict) else {}
+    if not bundles and isinstance(raw_holders.get("bundles"), dict):
+        bundles = raw_holders["bundles"]
+    insider = (
+        analysis.get("insiderNetwork")
+        if isinstance(analysis.get("insiderNetwork"), dict)
+        else {}
+    )
+    snipers = analysis.get("snipers") if isinstance(analysis.get("snipers"), dict) else {}
+
+    insider_score = as_float(insider.get("networkScore"))
+    bundle_score = as_float(bundles.get("bundledPct"))
+    if bundle_score is None:
+        bundle_score = as_float(bundles.get("bundlePct"))
+    sniper_score = as_float(snipers.get("pct"))
+
+    holder_score = as_float(holders.get("top10Pct"))
+    if holder_score is None:
+        concentration = raw_holders.get("concentration")
+        if isinstance(concentration, dict):
+            holder_score = as_float(concentration.get("top10"))
+    holder_count = as_float(holders.get("total"))
+    if holder_count is None:
+        holder_count = as_float(raw_holders.get("totalHolders"))
+
+    if rug_score is None:
+        return None
+
+    return {
+        "rugScore": rug_score,
+        "riskLevel": risk_level,
+        "insiderScore": insider_score,
+        "bundleScore": bundle_score,
+        "sniperScore": sniper_score,
+        "holderScore": holder_score,
+        "holderCount": holder_count,
+        "token": token,
+        "analysis": analysis or None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # RiskReportClient
 # ---------------------------------------------------------------------------
@@ -460,13 +538,21 @@ class RiskReportClient:
         if not self.config.defade_api_key:
             return _missing_key_result("defade")
         url = f"{DEFADE_BASE}/v1/analyze/{mint}"
-        data, status, err_type, err_msg, latency = http_get_json(
+        raw, status, err_type, err_msg, latency = http_get_json(
             "defade",
             url,
             headers={"x-api-key": self.config.defade_api_key},
             timeout=self.config.timeout,
         )
-        ok = data is not None
+        normalized = normalize_defade_analyze_response(raw)
+        if raw is not None and normalized is None and err_type is None:
+            if isinstance(raw, dict):
+                api_err = defade_analyze_error_message(raw)
+                err_msg = f"defade: {api_err}" if api_err else "defade: incomplete analyze response"
+            else:
+                err_msg = "defade: invalid analyze response"
+            err_type = "api_error"
+        ok = normalized is not None
         return SourceResult(
             source="defade",
             attempted=True,
@@ -477,8 +563,8 @@ class RiskReportClient:
             http_status=status,
             error_type=err_type,
             error_message=err_msg,
-            data=data,
-            raw=data,
+            data=normalized,
+            raw=raw,
         )
 
     def fetch_goplus(self, mint: str) -> SourceResult:
@@ -832,6 +918,10 @@ def build_category_metrics(
         holder["top_holders_pct"] = as_float(audit.get("topHoldersPercentage"))
         holder["holder_count"] = as_float(jup.get("holderCount"))
     if isinstance(defade, dict):
+        if holder["top_holders_pct"] is None:
+            holder["top_holders_pct"] = as_float(defade.get("holderScore"))
+        if holder["holder_count"] is None:
+            holder["holder_count"] = as_float(defade.get("holderCount"))
         holder["insider_score"] = as_float(defade.get("insiderScore"))
         holder["bundle_score"] = as_float(defade.get("bundleScore"))
         sniper = as_float(defade.get("sniperScore"))
@@ -1005,7 +1095,13 @@ def score_holder_distribution(
                 s = 10
             scores.append((s, 0.25))
     if isinstance(defade, dict):
-        for key in ("holderRiskScore", "holderScore", "insiderScore", "bundleScore"):
+        for key in (
+            "holderRiskScore",
+            "holderScore",
+            "insiderScore",
+            "bundleScore",
+            "sniperScore",
+        ):
             v = as_float(defade.get(key))
             if v is not None:
                 scores.append((clamp(v), 0.25))

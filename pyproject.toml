@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# Repo modules (data_acq_orch.py, dexscreener_api.py, …) live at the project root,
+# not in an installed package. Pytest’s default import path does not always
+# include this directory, so imports in tests/ fail without an explicit path.
+pythonpath = ["."]
