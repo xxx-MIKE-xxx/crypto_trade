@@ -10,7 +10,7 @@ import sys
 from typing import Optional, Sequence
 
 from crypto_trade.core.env import load_env
-from crypto_trade.core.logging import configure_logging
+from crypto_trade.core.logging_config import configure_logging
 
 from .report import (
     build_report,

@@ -63,6 +63,7 @@ import os
 import signal
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
+from dotenv import load_dotenv
 
 import websockets
 
@@ -75,7 +76,7 @@ from crypto_trade.core.io import (
     read_csv_col,
     save_json,
 )
-from crypto_trade.core.logging import configure_logging
+from crypto_trade.core.logging_config import configure_logging
 from crypto_trade.core.rpc import RpcPool, short_rpc_name
 from crypto_trade.core.time import now_iso, now_ts, utc_now
 from crypto_trade.ingest.solana_rpc import (

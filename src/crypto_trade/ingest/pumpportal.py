@@ -11,63 +11,82 @@ Run:
     python -m crypto_trade.ingest.pumpportal
 """
 
-from __future__ import annotations
-
-import asyncio
-import json
-import os
 from pathlib import Path
+import json
+from websockets.asyncio.client import connect
+import asyncio
+import os
+import requests
+from crypto_trade.core.env import load_env, get_env
+from crypto_trade.core.io import ensure_dir, append_jsonl
+from crypto_trade.core.time import utc_now_iso_ms_z
 
-import websockets
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+DATA_DIR = BASE_DIR / "data" / "migrations" 
+env_dir = BASE_DIR / ".env"
 
-from crypto_trade.core.env import load_env
-from crypto_trade.core.logging import configure_logging
-from crypto_trade.core.time import now_ts
+load_env()
 
-ENV_FILE = ".env"
-OUT_FILE = "pumpportal_migrations_sample.jsonl"
-DURATION_SECONDS = 120
+PUMPPORTAL_API_KEY = get_env("PUMPPORTAL_API_KEY") 
 
-
-async def _stream() -> None:
-    here = Path(__file__).resolve().parent
-    load_env(candidates=[here / ENV_FILE])
-
-    api_key = os.environ.get("PUMPPORTAL_API_KEY", "")
-
-    url = "wss://pumpportal.fun/api/data"
-    if api_key:
-        url += f"?api-key={api_key}"
-
-    out_path = here / OUT_FILE
-
-    async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
-        await ws.send(json.dumps({"method": "subscribeMigration"}))
-        await ws.send(json.dumps({"method": "subscribeNewToken"}))
-
-        print("listening to PumpPortal WebSocket")
-        print(f"writing to: {out_path}")
-
-        start = now_ts()
-        with out_path.open("a", encoding="utf-8") as out:
-            while now_ts() - start < DURATION_SECONDS:
-                try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=30)
-                except asyncio.TimeoutError:
-                    print("no message in 30s; still connected")
-                    continue
-
-                data = json.loads(msg)
-                row = {"received_at": now_ts(), "data": data}
-                print(json.dumps(data, ensure_ascii=False))
-                out.write(json.dumps(row, ensure_ascii=False) + "\n")
-                out.flush()
+BASE_URL = f"wss://pumpportal.fun/api/data?api-key={PUMPPORTAL_API_KEY}"
 
 
-def main() -> None:
-    configure_logging()
-    asyncio.run(_stream())
+def type_of_msg(msg: dict) -> str:
+    """Detect type of PumpPortal event - either MINT | MIGRATION | OTHER
+    """
+    if "message" in msg:
+        return "system"
+    if msg.get("txType") == "create":
+        return "mint"
+    if msg.get("txType") == "migrate":
+        return "migration"
+    return None
 
 
+async def subscribe_new_token(websocket):
+    payload = {
+        "method": "subscribeNewToken"
+    }
+    await websocket.send(json.dumps(payload))
+
+
+async def subscribe_migration(websocket):
+    payload = {
+        "method": "subscribeMigration"
+    }
+    await websocket.send(json.dumps(payload))
+
+
+async def listen(mints=True, migrations=True):
+    async with connect(BASE_URL) as websocket:
+        if mints:
+            await subscribe_new_token(websocket)
+        if migrations:
+            await subscribe_migration(websocket)
+
+        async for message in websocket:
+            msg = json.loads(message)
+            msg_type = type_of_msg(msg)
+            if msg_type in {"mint", "migration"}:
+                yield {
+                    "time": utc_now_iso_ms_z(),
+                    "type": msg_type,
+                    **msg
+                    
+                }
+
+
+
+            
+
+async def main():
+    await listen(
+        mints=True,
+        migrations=True
+    )
+
+
+            
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

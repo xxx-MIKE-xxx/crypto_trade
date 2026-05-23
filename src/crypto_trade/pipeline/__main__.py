@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import signal
 
-from crypto_trade.core.logging import configure_logging
+from crypto_trade.core.logging_config import configure_logging
 from crypto_trade.core.time import utc_now_iso_ms_z
 from crypto_trade.ingest.bronze import EventSink
 from crypto_trade.pipeline.config import PipelineConfig, build_arg_parser
