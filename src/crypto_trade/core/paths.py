@@ -15,3 +15,5 @@ MIGRATIONS_DIR = RAW_DIR / "migrations"
 CONFIG_DIR = PROJECT_ROOT / "config"
 LOGS_DIR = PROJECT_ROOT / "logs"
 ENV_FILE = PROJECT_ROOT / ".env"
+
+PUMPPORTAL_WS_CONFIG = CONFIG_DIR / "pumpportal_ws.yaml"

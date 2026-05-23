@@ -14,23 +14,25 @@ Run:
 from pathlib import Path
 import json
 from websockets.asyncio.client import connect
+import websockets
 import asyncio
-import os
-import requests
 from crypto_trade.core.env import load_env, get_env
-from crypto_trade.core.io import ensure_dir, append_jsonl
 from crypto_trade.core.time import utc_now_iso_ms_z
-
-BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
-DATA_DIR = BASE_DIR / "data" / "migrations" 
-env_dir = BASE_DIR / ".env"
+from crypto_trade.core.yaml import get_yaml_value
+from crypto_trade.core.paths import PUMPPORTAL_WS_CONFIG
+from crypto_trade.core.logging_config import configure_logging
+import logging
 
 load_env()
+
+logger = logging.getLogger(__name__)
 
 PUMPPORTAL_API_KEY = get_env("PUMPPORTAL_API_KEY") 
 
 BASE_URL = f"wss://pumpportal.fun/api/data?api-key={PUMPPORTAL_API_KEY}"
 
+RETRY_INITIAL_DELAY = get_yaml_value(PUMPPORTAL_WS_CONFIG, "retry", "initial_delay_s")
+RETRY_MAX_DELAY = get_yaml_value(PUMPPORTAL_WS_CONFIG, "retry", "max_delay_s")
 
 def type_of_msg(msg: dict) -> str:
     """Detect type of PumpPortal event - either MINT | MIGRATION | OTHER
@@ -59,34 +61,34 @@ async def subscribe_migration(websocket):
 
 
 async def listen(mints=True, migrations=True):
-    async with connect(BASE_URL) as websocket:
-        if mints:
-            await subscribe_new_token(websocket)
-        if migrations:
-            await subscribe_migration(websocket)
-
-        async for message in websocket:
-            msg = json.loads(message)
-            msg_type = type_of_msg(msg)
-            if msg_type in {"mint", "migration"}:
-                yield {
-                    "time": utc_now_iso_ms_z(),
-                    "type": msg_type,
-                    **msg
-                    
-                }
-
-
-
-            
+    retry_delay = RETRY_INITIAL_DELAY
+    while True:
+            try:
+                async with connect(BASE_URL) as websocket:
+                    retry_delay = RETRY_INITIAL_DELAY
+                    if mints:
+                        await subscribe_new_token(websocket)
+                    if migrations:
+                        await subscribe_migration(websocket)
+                    async for message in websocket:
+                        msg = json.loads(message)
+                        msg_type = type_of_msg(msg)
+                        if msg_type in {"mint", "migration"}:
+                            yield {
+                                "time": utc_now_iso_ms_z(),
+                                "type": msg_type,
+                                **msg
+                            }
+            except (OSError, websockets.exceptions.ConnectionClosed, websockets.exceptions.InvalidHandshake,
+                                websockets.exceptions.InvalidStatus) as e:
+                logger.warning("Connection lost - reconnecting %s", e)
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, RETRY_MAX_DELAY)
 
 async def main():
-    await listen(
-        mints=True,
-        migrations=True
-    )
-
-
+    configure_logging()
+    async for event in listen(mints=True, migrations=True):
+        print(event)
             
 if __name__ == "__main__":
     asyncio.run(main())

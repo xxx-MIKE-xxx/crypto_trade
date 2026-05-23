@@ -11,7 +11,6 @@ from crypto_trade.core.time import utc_now
 from crypto_trade.core.paths import MIGRATIONS_DIR
 from crypto_trade.core.logging_config import configure_logging
 
-
 logger = logging.getLogger(__name__)
 
 def output_file() -> Path:
