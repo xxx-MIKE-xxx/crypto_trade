@@ -46,3 +46,8 @@ def load_env(
 def get_env(name: str, default: Optional[str] = None) -> Optional[str]:
     """Convenience wrapper for ``os.environ.get`` with consistent typing."""
     return os.environ.get(name, default)
+
+
+def get_envs(names: list, default: Optional[str] = None) -> list[Optional[str]]:
+    """Convenience wrapper for ``os.environ.get`` with consistent typing."""
+    return [os.environ.get(name, default) for name in names]

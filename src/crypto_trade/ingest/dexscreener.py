@@ -23,7 +23,7 @@ Install:
   pip install requests
 
 Run:
-  python test_dexscreener_enrichment_api.py --token 33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump --out ./dexscreener_test --debug
+  python test_dexscreener_enrichment_api.py 33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump
 
 Outputs:
   raw/*.json
@@ -34,24 +34,64 @@ Outputs:
 from __future__ import annotations
 
 import argparse
-import time
-from pathlib import Path
-from typing import Any, Dict, List
+import json
 from dotenv import load_dotenv
-import os
-
-'''
-from crypto_trade.core.http import HttpResponse, get_json, make_session
-from crypto_trade.core.io import save_json
-from crypto_trade.core.logging import configure_logging
-from crypto_trade.core.time import now_ms, utc_now
-
-'''
-
-BASE_PATH = Path(__file__).resolve().parents
+import asyncio
+import logging
+from crypto_trade.core.http import request_json
+from crypto_trade.core.logging_config import configure_logging
+from crypto_trade.core.time import now_ts
 
 load_dotenv()
 
-dex_screener_api_key = os.getenv("HELIUS_API_KEY")
+logger = logging.getLogger(__name__)
 
-print(dex_screener_api_key)
+DEXSCREENER_BASE = "https://api.dexscreener.com"
+
+CHAIN_ID = "solana"
+
+async def general_info(mint):
+    url = f"{DEXSCREENER_BASE}/token-pairs/v1/{CHAIN_ID}/{mint}"
+    response = await request_json(
+        "GET",
+        url
+    )
+    if response.error_type:
+        logger.warning("Failed to download dexscreener general token information: %s", response)
+    else:
+        logger.info("Downloaded dexscreener general token information")
+
+    return response
+
+    
+async def check_paid_orders(mint):
+    url = f"{DEXSCREENER_BASE}/orders/v1/{CHAIN_ID}/{mint}"
+    response = await request_json(
+        "GET",
+        url
+    )
+    if response.error_type:
+        logger.warning("Failed to download dexscreener token paid orders info: %s", response)
+    else:
+        logger.info("Downloaded dexscreener token paid orders info")
+    
+    return response
+
+
+async def main(mint):
+    configure_logging()
+    names = ["general_info", "paid_orders"]
+    data = await asyncio.gather(
+        general_info(mint),
+        check_paid_orders(mint)
+    )
+    output = dict(zip(names, data))
+    output["time"] = now_ts()
+    return output
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mint", help="solana token mint address")
+    args = parser.parse_args()
+    data = asyncio.run(main(args.mint))
+    print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
