@@ -24,6 +24,7 @@ Install:
 
 Run:
   python test_dexscreener_enrichment_api.py 33eum82LaAhtv5YkUq1BdwEviSErH5CnFxqVNLT5pump
+  
 
 Outputs:
   raw/*.json
@@ -41,6 +42,7 @@ import logging
 from crypto_trade.core.http import request_json
 from crypto_trade.core.logging_config import configure_logging
 from crypto_trade.core.time import now_ts
+from dataclasses import asdict, is_dataclass
 
 load_dotenv()
 
@@ -49,6 +51,12 @@ logger = logging.getLogger(__name__)
 DEXSCREENER_BASE = "https://api.dexscreener.com"
 
 CHAIN_ID = "solana"
+
+
+def json_default(obj):
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    return str(obj)
 
 async def general_info(mint):
     url = f"{DEXSCREENER_BASE}/token-pairs/v1/{CHAIN_ID}/{mint}"
@@ -94,4 +102,6 @@ if __name__ == "__main__":
     parser.add_argument("mint", help="solana token mint address")
     args = parser.parse_args()
     data = asyncio.run(main(args.mint))
-    print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+    print(json.dumps(data, indent=2, ensure_ascii=False, default=json_default))
+    with open("tmp/dex_screener_report.json", "w", encoding="utf-8") as f:
+        json.dump(data, indent=2, ensure_ascii=False, default=json_default, fp=f)

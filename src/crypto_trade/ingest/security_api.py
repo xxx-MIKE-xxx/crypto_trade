@@ -6,11 +6,13 @@ import asyncio
 import logging
 import hashlib
 import json
+import argparse
+from dataclasses import is_dataclass, asdict
 from crypto_trade.core.logging_config import configure_logging
 from crypto_trade.core.env import load_env, get_envs
 from crypto_trade.core.http import request_json
 from crypto_trade.core.time import now_ts
-import argparse
+
 
 load_env()
 
@@ -23,6 +25,11 @@ DEXSCREENER_BASE = "https://api.dexscreener.com"
 DEFADE_BASE = "https://api.defade.org/v1"
 GOPLUS_BASE = "https://api.gopluslabs.io/api/v1"
 JUPITER_BASE = "https://api.jup.ag/tokens/v2"
+
+def json_default(obj):
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    return str(obj)
 
 
 async def download_rugcheck(mint):
@@ -155,6 +162,9 @@ if __name__ == "__main__":
     parser.add_argument("mint", help="Solana token mint address")
     args = parser.parse_args()
     reports = asyncio.run(main(args.mint))
-    print(json.dumps(reports, indent=2, ensure_ascii=False, default=str))
+    print(json.dumps(reports, indent=2, ensure_ascii=False, default=json_default))
+    with open("tmp/security_report.json", "w", encoding="utf-8") as f:
+        json.dump(reports, indent=2, ensure_ascii=False, default=json_default, fp=f)
+        
 
 

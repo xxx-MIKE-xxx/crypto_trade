@@ -1,0 +1,8 @@
+max_top_10_pct_holders_pct: 30
+max_top_5_pct_holders_pct: 30
+max_top_20_pct_holders_pct:  30
+max_bundle_pct: 30
+max_risk_score: 90
+min_liquidity_usd: 10000
+intended_position_size_usd: 20
+position_size_multiplier: 5

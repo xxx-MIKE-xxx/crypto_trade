@@ -41,6 +41,11 @@ def iter_jsonl(path: Path) -> Iterator[Any]:
                 continue
 
 
+def load_json(path: str) -> dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def save_json(path: Path, obj: Any) -> None:
     """Atomic JSON write via temp file + replace."""
     ensure_dir(path.parent)

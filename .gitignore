@@ -17,19 +17,20 @@ venv/
 env/
 
 # Local data
-data/raw/
-data/bronze/
-data/silver/
-data/features/
-data/labels/
-data/reports/
+data/raw/*
+data/bronze/*
+data/silver/*
+data/features/*
+data/labels/*
+data/reports/*
+tmp/*
 *.parquet
 *.jsonl
 *.sqlite
 *.db
 
 # Notebooks
-.ipynb_checkpoints/
+.ipynb_checkpoints/*
 
 # OS/editor
 .DS_Store
