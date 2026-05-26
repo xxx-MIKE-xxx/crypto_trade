@@ -41,7 +41,8 @@ import asyncio
 import logging
 from crypto_trade.core.http import request_json
 from crypto_trade.core.logging_config import configure_logging
-from crypto_trade.core.time import now_ts
+from crypto_trade.core.time import now_ts, now_ms
+from crypto_trade.core.io import append_jsonl
 from dataclasses import asdict, is_dataclass
 
 load_dotenv()
@@ -86,9 +87,75 @@ async def check_paid_orders(mint):
     return response
 
 
-async def stream_transactions(pool):
-    pass
+async def trading_info_multi_pool(mint):
+    url = f"{DEXSCREENER_BASE}/token-pairs/v1/{CHAIN_ID}/{mint}"
+    response = await request_json(
+        "GET",
+        url
+    )
+    if response.error_type:
+        logger.warning("Failed to download dexcreener coin trading info for %s", response)
+    else:
+        logger.info("Downloaded dexscreener coin trading info")
+    return response
+
+async def transactions_multiple_tokens(*mints):
+    a = [str(a) for a in [*mints]]
+    a = (",".join(a))
+    url = f"{DEXSCREENER_BASE}/tokens/v1/solana/{a}"
+    response = await request_json(
+        "GET",
+        url
+    )
+    if response.error_type:
+        logger.warning("Failed to download dexscreener multi-coin info: %s", response)
+    else:
+        logger.info("Downloaded dexscreener multi-coin info")
     
+    return response
+
+ 
+
+async def stream_trading_info_one_coin(save_path, interval, length, mint):
+    length_ms = length * 1000
+    starting_time = now_ms()
+    while now_ms() - starting_time <= length_ms:
+        try:
+            trading_info = await trading_info_multi_pool(mint)
+            if not trading_info.error_type:
+                snapshot = {
+                    "timestamp": now_ts(),
+                    "trading_info": trading_info.data
+                }
+                append_jsonl(save_path, snapshot)
+        except Exception as e:
+            logger.exception("Polling failed: %s", e)
+        await asyncio.sleep(interval)
+
+        
+async def stream_trading_info_multi_coin(save_path, interval, length, *mints):
+    length_ms = length * 1000
+    starting_time = now_ms()
+    while now_ms() - starting_time <= length_ms:
+        try:
+            trading_info = await transactions_multiple_tokens(*mints)
+
+            if not trading_info.error_type:
+                snapshot = {
+                    "timestamp": now_ts(),
+                    "mints": list(mints),
+                    "trading_info": trading_info.data
+                }
+
+                append_jsonl(save_path, snapshot)
+
+        except Exception as e:
+            logger.exception("Polling failed: %s", e)
+
+        await asyncio.sleep(interval)
+
+        
+        
 
 async def main(mint):
     configure_logging()
