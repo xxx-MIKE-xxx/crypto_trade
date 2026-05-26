@@ -1,0 +1,33 @@
+browser:
+  enabled: true
+  timeout_ms: 15000
+  wait_until: "domcontentloaded"
+  wait_after_load_ms: 2500
+
+  viewport:
+    width: 1365
+    height: 900
+
+  scroll_steps: 4
+  scroll_wait_ms: 350
+
+  click_texts:
+    - "Enter"
+    - "Launch"
+    - "Start"
+    - "Continue"
+    - "I agree"
+    - "Accept"
+    - "Accept all"
+    - "Close"
+    - "Skip"
+    - "No thanks"
+
+  click_selectors:
+    - "[aria-label='Close']"
+    - "[aria-label='close']"
+    - "button:has-text('Close')"
+    - "button:has-text('Skip')"
+    - "button:has-text('I agree')"
+    - "button:has-text('Accept')"
+    - "button:has-text('Enter')"

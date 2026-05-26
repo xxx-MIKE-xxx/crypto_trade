@@ -1,8 +1,87 @@
-max_top_10_pct_holders_pct: 30
-max_top_5_pct_holders_pct: 30
-max_top_20_pct_holders_pct:  30
-max_bundle_pct: 30
-max_risk_score: 90
-min_liquidity_usd: 10000
-intended_position_size_usd: 20
-position_size_multiplier: 5
+rules:
+  mint_authority_active:
+    enabled: true
+    required: true
+    params: {}
+
+  freeze_authority_active:
+    enabled: true
+    required: true
+    params: {}
+
+  liquidity_below_threshold:
+    enabled: true
+    required: true
+    params:
+      min_liquidity_usd: 5000
+      intended_position_size_usd: 30
+      position_size_multiplier: 50
+
+  risk_score_exceeds_threshold:
+    enabled: true
+    required: false
+    params:
+      max_risk_score: 90
+
+  critical_risk_level:
+    enabled: true
+    required: false
+    params:
+      blocked_levels:
+        - CRITICAL
+
+  non_transferable:
+    enabled: true
+    required: false
+    params: {}
+
+  transfer_fee_upgradable:
+    enabled: true
+    required: true
+    params: {}
+
+  metadata_mutable:
+    enabled: false
+    required: false
+    params: {}
+
+  no_sells_after_activity_window:
+    enabled: true
+    required: false
+    params:
+      minimum_buys: 10
+      window: h1
+
+  holder_concentration:
+    enabled: true
+    required: true
+    params:
+      max_single_holder_pct: 20
+      max_top5_pct: 40
+      max_top10_pct: 55
+      max_top20_pct: 70
+      max_bundle_pct: 60
+      max_bundle_group_pct: 25
+
+      # Legacy/original config values kept for compatibility/research.
+      max_top_holders_pct: 55
+      max_insider_score: 80
+      max_bundle_score: 60
+      max_sniper_score: 60
+      max_dev_rug_history: 0
+
+  permanent_delegate_enabled:
+    enabled: true
+    required: false
+    params: {}
+
+  dangerous_transfer_hook_detected:
+    enabled: true
+    required: false
+    params: {}
+
+  cannot_sell_test_amount:
+    enabled: true
+    required: false
+    params: {}
+

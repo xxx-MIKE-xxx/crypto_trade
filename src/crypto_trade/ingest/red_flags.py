@@ -152,8 +152,9 @@ def liquidity_below_threshold(
         }
 
     min_liquidity_usd = float(params.get("min_liquidity_usd", 5000))
-    intended_position_size_usd = float(params.get("intended_position_size_usd", 30))
-    position_size_multiplier = float(params.get("position_size_multiplier", 50))
+    "The position size x multiplier is currently replaced by just min. liq. because trade sizes can vary"
+    intended_position_size_usd = 0 #float(params.get("intended_position_size_usd", 30))
+    position_size_multiplier = 0 #float(params.get("position_size_multiplier", 50))
 
     threshold = max(
         min_liquidity_usd,
@@ -472,7 +473,9 @@ def main(security_report_path: str, dexscreener_report_path: str) -> dict[str, A
     configure_logging()
     security_report = load_json(security_report_path)
     dex_features = load_json(dexscreener_report_path)
-    return evaluate_red_flags(security_report, dex_features)
+    output = evaluate_red_flags(security_report, dex_features)
+    logger.info("Finished flag evaluations, tests: %s", output["failed"])
+    return output
 
 
 if __name__ == "__main__":

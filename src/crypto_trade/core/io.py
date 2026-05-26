@@ -50,8 +50,17 @@ def save_json(path: Path, obj: Any) -> None:
     """Atomic JSON write via temp file + replace."""
     ensure_dir(path.parent)
     tmp = path.with_suffix(path.suffix + ".tmp")
+
     with tmp.open("w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=2, sort_keys=True, default=str)
+        json.dump(
+            obj,
+            f,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+
     tmp.replace(path)
 
 
