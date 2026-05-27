@@ -4,6 +4,7 @@ from websockets.asyncio.client import connect
 import logging
 import argparse
 import base64
+import websockets
 from solders.keypair import Keypair
 from solders.hash import Hash
 from solders.pubkey import Pubkey
@@ -15,6 +16,7 @@ from crypto_trade.core.time import now_ts
 from crypto_trade.core.env import get_env, load_env
 from crypto_trade.core.http import request_json
 from crypto_trade.core.paths import ENV_FILE
+from crypto_trade.core.io import append_jsonl
 
 logger = logging.getLogger(__name__)
 load_env()
@@ -83,6 +85,29 @@ class RPC:
         encoded_tx=base64.b64encode(bytes(transaction)).decode("utf-8")
         return encoded_tx
     
+    async def connect_websocket(self, params, method, file_path, ping_interval=20, ping_timeout=20):
+        subscribe_msg = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        }
+
+        async with websockets.connect(
+            HELIUS_BASE,
+            ping_interval=ping_interval,
+            ping_timeout=ping_timeout,
+        ) as ws:
+            await ws.send(json.dumps(subscribe_msg))
+
+            response = json.loads(await ws.recv())
+            logger.info("Subscription response: %s", response)
+
+            while True:
+                msg = await ws.recv()
+                data = json.loads(msg)
+                append_jsonl(file_path, data)
+
     @staticmethod
     def load_wallet_keypair(keypair_bytes):
         keypair = json.loads(keypair_bytes)

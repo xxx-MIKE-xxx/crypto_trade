@@ -16,7 +16,8 @@ dependencies = [
     "pyarrow",
     "pyyaml",
     "pydantic",
-    "beautifulsoup4"
+    "beautifulsoup4",
+    "twscrape"
 ]
 
 [project.optional-dependencies]

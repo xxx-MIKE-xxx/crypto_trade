@@ -16,13 +16,9 @@ from typing import Any, Mapping, MutableMapping
 
 from crypto_trade.core.text import compact_json_dumps, safe_part
 from crypto_trade.core.time import parse_event_ts, utc_now_iso_ms_z
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-try:  # pyarrow is an optional dependency at runtime.
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-except ImportError:  # pragma: no cover - exercised only on bare installs
-    pa = None  # type: ignore[assignment]
-    pq = None  # type: ignore[assignment]
 
 
 def event_timestamp(payload: Mapping[str, Any]) -> str:
