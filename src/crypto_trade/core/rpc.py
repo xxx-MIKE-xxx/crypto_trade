@@ -23,10 +23,10 @@ load_env()
 
 HELIUS_API_KEY = get_env("HELIUS_API_KEY")
 HELIUS_BASE = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-
+private_key = get_env("SOLANA_WALLET_SECRET_KEY_BYTES")
 
 class RPC:
-    def __init__(self, api_key, private_key, url=HELIUS_BASE):
+    def __init__(self, api_key=HELIUS_API_KEY, private_key=private_key, url=HELIUS_BASE):
         self.api_key = api_key
         self.url = url
         self.private_key = private_key
@@ -92,9 +92,9 @@ class RPC:
             "method": method,
             "params": params,
         }
-
+        url = f"wss://mainnet.helius-rpc.com/?api-key={self.api_key}"
         async with websockets.connect(
-            HELIUS_BASE,
+            url, 
             ping_interval=ping_interval,
             ping_timeout=ping_timeout,
         ) as ws:
