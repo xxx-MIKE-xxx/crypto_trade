@@ -1,10 +1,10 @@
 onchain:
   capture_time: 300
   rpc_interval: 10
-  infer_vaults_limit: 30
+  infer_vaults_limit: 10
   performance_sample_limit: 60
-  max_signatures_per_address: 300
-  max_transactions_total: 500
+  max_signatures_per_address: 25
+  max_transactions_total: 50
   simulate_tx_base64: null
 
 security:
@@ -25,3 +25,4 @@ dexscreener:
 
 drop:
   keep_partial_onchain: true
+  backfill_on_cancel: false

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from crypto_trade.core.io import append_jsonl
 from crypto_trade.core.paths import CONFIG_DIR
-from crypto_trade.core.time import utc_now_iso_ms_z
+from crypto_trade.core.time import now_ms, utc_now_iso_ms_z
 from crypto_trade.core.yaml import load_yaml
 from crypto_trade.ingest import dexscreener, onchain, red_flags, security_api, telegram_info, twitter
 from crypto_trade.ingest import website_grader
@@ -16,8 +15,6 @@ from crypto_trade.ingest.bronze import EventSink
 from crypto_trade.pipeline.config import PipelineConfig
 from crypto_trade.pipeline.mint import looks_like_solana_address
 from crypto_trade.pipeline.state import StateStore
-
-logger = logging.getLogger(__name__)
 
 ORCHESTRATOR_CONFIG_PATH = CONFIG_DIR / "orchestrator.yaml"
 
@@ -34,75 +31,21 @@ PAIR_KEYS = {
     "marketid",
 }
 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "onchain": {
-        "capture_time": 3600,
-        "rpc_interval": 10,
-        "infer_vaults_limit": 50,
-        "performance_sample_limit": 60,
-        "max_signatures_per_address": 1000,
-        "max_transactions_total": 3000,
-        "simulate_tx_base64": None,
-    },
-    "security": {
-        "enabled": True,
-        "cancel_on_red_flags": True,
-        "red_flags_config": "config/red_flags.yaml",
-    },
-    "analytics": {
-        "website_enabled": True,
-        "twitter_enabled": True,
-        "telegram_enabled": True,
-        "twitter_posts_limit": 20,
-    },
-    "dexscreener": {
-        "enabled": True,
-        "interval": 60,
-        "length": 24 * 60 * 60,
-    },
-    "drop": {
-        "keep_partial_onchain": True,
-    },
-}
 
-
-def merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    out = dict(base)
-
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = merge_dict(out[key], value)
-        else:
-            out[key] = value
-
-    return out
-
-
-def load_orchestrator_config(path: Path = ORCHESTRATOR_CONFIG_PATH) -> dict[str, Any]:
-    if not path.exists():
-        return DEFAULT_CONFIG
-
-    loaded = load_yaml(path) or {}
-    if not isinstance(loaded, dict):
-        return DEFAULT_CONFIG
-
-    return merge_dict(DEFAULT_CONFIG, loaded)
-
-
-def raw_dir(cfg: PipelineConfig) -> Path:
-    return cfg.data_root / "raw"
+def load_orchestrator_config() -> dict[str, Any]:
+    return load_yaml(ORCHESTRATOR_CONFIG_PATH)
 
 
 def analytics_dir(cfg: PipelineConfig, mint: str) -> Path:
-    return raw_dir(cfg) / "analytics" / mint
+    return cfg.data_root / "raw" / "analytics" / mint
 
 
 def onchain_dir(cfg: PipelineConfig, mint: str) -> Path:
-    return raw_dir(cfg) / "onchain" / mint
+    return cfg.data_root / "raw" / "onchain" / mint
 
 
 def orchestrator_log_path(cfg: PipelineConfig) -> Path:
-    return raw_dir(cfg) / "orchestrator" / f"{utc_now_iso_ms_z()[:10]}.jsonl"
+    return cfg.data_root / "raw" / "orchestrator" / f"{utc_now_iso_ms_z()[:10]}.jsonl"
 
 
 async def log_event(
@@ -133,28 +76,6 @@ async def log_event(
     )
 
 
-def source_data(report: dict[str, Any], name: str) -> Any:
-    source = report.get(name)
-
-    if isinstance(source, dict):
-        return source.get("data")
-
-    return getattr(source, "data", None)
-
-
-def dex_pairs(security_report: dict[str, Any]) -> list[dict[str, Any]]:
-    data = source_data(security_report, "dexscreener")
-
-    if isinstance(data, list):
-        return [x for x in data if isinstance(x, dict)]
-
-    if isinstance(data, dict):
-        pairs = data.get("pairs") or data.get("data") or []
-        return [x for x in pairs if isinstance(x, dict)]
-
-    return []
-
-
 def find_pair_address(obj: Any) -> str | None:
     if isinstance(obj, Mapping):
         for key, value in obj.items():
@@ -176,28 +97,31 @@ def find_pair_address(obj: Any) -> str | None:
     return None
 
 
-def first_url_from_pair(pair: dict[str, Any], kind: str) -> str | None:
-    info = pair.get("info") or {}
+def dex_pair(security_report: dict[str, Any]) -> dict[str, Any]:
+    pairs = security_report["dexscreener"]["data"] or []
+    return pairs[0] if pairs else {}
 
-    if kind == "website":
-        for item in info.get("websites") or []:
-            if isinstance(item, dict) and item.get("url"):
-                return str(item["url"])
 
-    for item in info.get("socials") or []:
-        if not isinstance(item, dict):
+def first_website(pair: dict[str, Any]) -> str | None:
+    for website in (pair.get("info") or {}).get("websites") or []:
+        if isinstance(website, dict) and website.get("url"):
+            return str(website["url"])
+
+    return None
+
+
+def first_social(pair: dict[str, Any], name: str) -> str | None:
+    for social in (pair.get("info") or {}).get("socials") or []:
+        if not isinstance(social, dict):
             continue
 
-        social_type = str(item.get("type") or "").lower()
-        url = item.get("url")
+        social_type = str(social.get("type") or "").lower()
+        url = social.get("url")
 
-        if not url:
-            continue
-
-        if kind == "twitter" and social_type in {"twitter", "x"}:
+        if url and social_type == name:
             return str(url)
 
-        if kind == "telegram" and social_type == "telegram":
+        if url and name == "twitter" and social_type == "x":
             return str(url)
 
     return None
@@ -208,15 +132,15 @@ def metadata_from_security_report(
     migration_event: Mapping[str, Any],
     security_report: dict[str, Any],
 ) -> dict[str, Any]:
-    pair = dex_pairs(security_report)[0] if dex_pairs(security_report) else {}
+    pair = dex_pair(security_report) if security_report else {}
     base_token = pair.get("baseToken") or {}
 
     return {
         "name": base_token.get("name") or migration_event.get("name") or mint,
         "symbol": base_token.get("symbol") or migration_event.get("symbol") or mint[:6],
-        "website": first_url_from_pair(pair, "website") or migration_event.get("website"),
-        "twitter": first_url_from_pair(pair, "twitter") or migration_event.get("twitter"),
-        "telegram": first_url_from_pair(pair, "telegram") or migration_event.get("telegram"),
+        "website": first_website(pair) or migration_event.get("website"),
+        "twitter": first_social(pair, "twitter") or migration_event.get("twitter"),
+        "telegram": first_social(pair, "telegram") or migration_event.get("telegram"),
         "pair_address": find_pair_address(migration_event) or pair.get("pairAddress"),
     }
 
@@ -234,8 +158,8 @@ async def run_stage(
     kwargs: dict[str, Any] | None = None,
 ) -> Any:
     kwargs = kwargs or {}
-    job_id = state.start_job(mint, stage, ["direct", stage])
     started = utc_now_iso_ms_z()
+    job_id = state.start_job(mint, stage, ["direct", stage])
 
     await log_event(
         cfg,
@@ -264,6 +188,7 @@ async def run_stage(
 
     except asyncio.CancelledError:
         state.finish_job(job_id, status="cancelled", error="cancelled")
+
         await log_event(
             cfg,
             sink,
@@ -272,6 +197,7 @@ async def run_stage(
             payload={"started": started, "finished": utc_now_iso_ms_z()},
             level="warning",
         )
+
         raise
 
     except Exception as exc:
@@ -290,6 +216,59 @@ async def run_stage(
             raise
 
         return None
+
+
+def remaining_capture_seconds(start_ms: int, total_seconds: int) -> int:
+    elapsed_seconds = max(0, (now_ms() - start_ms) // 1000)
+    return max(0, total_seconds - elapsed_seconds)
+
+
+async def cancel_task(task: asyncio.Task[Any]) -> None:
+    if not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def start_onchain_capture(
+    *,
+    cfg: PipelineConfig,
+    state: StateStore,
+    sink: EventSink,
+    mint: str,
+    stage: str,
+    onchain_cfg: dict[str, Any],
+    save_dir: Path,
+    pair_address: str | None,
+    capture_time: int,
+    window_start_ms: int,
+    backfill_on_cancel: bool,
+) -> asyncio.Task[Any]:
+    return asyncio.create_task(
+        run_stage(
+            cfg=cfg,
+            state=state,
+            sink=sink,
+            mint=mint,
+            stage=stage,
+            fn=onchain.main,
+            required=True,
+            kwargs={
+                "mint": mint,
+                "capture_time": capture_time,
+                "rpc_interval": int(onchain_cfg["rpc_interval"]),
+                "watch_accounts": [],
+                "pair_address": pair_address,
+                "infer_vaults_limit": int(onchain_cfg["infer_vaults_limit"]),
+                "simulate_tx_base64": onchain_cfg.get("simulate_tx_base64"),
+                "performance_sample_limit": int(onchain_cfg["performance_sample_limit"]),
+                "max_signatures_per_address": int(onchain_cfg["max_signatures_per_address"]),
+                "max_transactions_total": int(onchain_cfg["max_transactions_total"]),
+                "save_dir": save_dir,
+                "window_start_ms": window_start_ms,
+                "backfill_on_cancel": backfill_on_cancel,
+            },
+        )
+    )
 
 
 def save_website_report(
@@ -327,7 +306,7 @@ async def run_optional_analytics(
     save_dir = analytics_dir(cfg, mint)
     tasks = []
 
-    if analytics_cfg.get("website_enabled") and meta.get("website"):
+    if analytics_cfg["website_enabled"] and meta.get("website"):
         tasks.append(
             run_stage(
                 cfg=cfg,
@@ -336,8 +315,8 @@ async def run_optional_analytics(
                 mint=mint,
                 stage="website_grader",
                 fn=asyncio.to_thread,
+                args=(save_website_report,),
                 kwargs={
-                    "func": save_website_report,
                     "mint": mint,
                     "meta": meta,
                     "save_dir": save_dir,
@@ -345,7 +324,7 @@ async def run_optional_analytics(
             )
         )
 
-    if analytics_cfg.get("twitter_enabled") and meta.get("twitter"):
+    if analytics_cfg["twitter_enabled"] and meta.get("twitter"):
         tasks.append(
             run_stage(
                 cfg=cfg,
@@ -357,12 +336,12 @@ async def run_optional_analytics(
                 kwargs={
                     "link": str(meta["twitter"]),
                     "save_dir": save_dir,
-                    "posts_limit": analytics_cfg.get("twitter_posts_limit"),
+                    "posts_limit": analytics_cfg["twitter_posts_limit"],
                 },
             )
         )
 
-    if analytics_cfg.get("telegram_enabled") and meta.get("telegram"):
+    if analytics_cfg["telegram_enabled"] and meta.get("telegram"):
         tasks.append(
             run_stage(
                 cfg=cfg,
@@ -394,6 +373,11 @@ async def migrated_token_worker(
 ) -> None:
     async with semaphore:
         orch_cfg = load_orchestrator_config()
+        onchain_cfg = orch_cfg["onchain"]
+        security_cfg = orch_cfg["security"]
+        dexscreener_cfg = orch_cfg["dexscreener"]
+        drop_cfg = orch_cfg["drop"]
+
         a_dir = analytics_dir(cfg, mint)
         o_dir = onchain_dir(cfg, mint)
 
@@ -403,7 +387,11 @@ async def migrated_token_worker(
         state.mark_migrated(mint, a_dir, migration_event)
         state.mark_status(mint, "capturing")
 
+        capture_start_ms = now_ms()
+        capture_seconds = int(onchain_cfg["capture_time"])
+        backfill_on_cancel = bool(drop_cfg["backfill_on_cancel"])
         pair_address = find_pair_address(migration_event)
+        active_pair_address = None
 
         await log_event(
             cfg,
@@ -414,40 +402,72 @@ async def migrated_token_worker(
                 "analytics_dir": str(a_dir),
                 "onchain_dir": str(o_dir),
                 "pair_address": pair_address,
+                "capture_start_ms": capture_start_ms,
             },
         )
 
-        onchain_cfg = orch_cfg["onchain"]
+        active_capture_task = start_onchain_capture(
+            cfg=cfg,
+            state=state,
+            sink=sink,
+            mint=mint,
+            stage="helius_basic_capture",
+            onchain_cfg=onchain_cfg,
+            save_dir=o_dir,
+            pair_address=None,
+            capture_time=capture_seconds,
+            window_start_ms=capture_start_ms,
+            backfill_on_cancel=False,
+        )
 
-        capture_task = asyncio.create_task(
-            run_stage(
+        async def switch_to_vault_capture(
+            discovered_pair_address: str,
+            event_type: str,
+        ) -> None:
+            nonlocal active_capture_task, active_pair_address
+
+            if discovered_pair_address == active_pair_address:
+                return
+
+            await cancel_task(active_capture_task)
+
+            active_pair_address = discovered_pair_address
+            remaining = remaining_capture_seconds(capture_start_ms, capture_seconds)
+
+            await log_event(
+                cfg,
+                sink,
+                event_type=event_type,
+                mint=mint,
+                payload={
+                    "pair_address": discovered_pair_address,
+                    "remaining_capture_seconds": remaining,
+                    "window_start_ms": capture_start_ms,
+                },
+                level="warning" if event_type == "pair_address_found_late" else "info",
+            )
+
+            active_capture_task = start_onchain_capture(
                 cfg=cfg,
                 state=state,
                 sink=sink,
                 mint=mint,
-                stage="helius_capture",
-                fn=onchain.main,
-                required=True,
-                kwargs={
-                    "mint": mint,
-                    "capture_time": int(onchain_cfg["capture_time"]),
-                    "rpc_interval": int(onchain_cfg["rpc_interval"]),
-                    "watch_accounts": [],
-                    "pair_address": pair_address,
-                    "infer_vaults_limit": int(onchain_cfg["infer_vaults_limit"]),
-                    "simulate_tx_base64": onchain_cfg.get("simulate_tx_base64"),
-                    "performance_sample_limit": int(onchain_cfg["performance_sample_limit"]),
-                    "max_signatures_per_address": int(onchain_cfg["max_signatures_per_address"]),
-                    "max_transactions_total": int(onchain_cfg["max_transactions_total"]),
-                    "save_dir": o_dir,
-                },
+                stage="helius_vault_capture",
+                onchain_cfg=onchain_cfg,
+                save_dir=o_dir,
+                pair_address=discovered_pair_address,
+                capture_time=remaining,
+                window_start_ms=capture_start_ms,
+                backfill_on_cancel=backfill_on_cancel,
             )
-        )
+
+        if pair_address:
+            await switch_to_vault_capture(pair_address, "pair_address_found_initially")
 
         try:
             security_report = {}
 
-            if orch_cfg["security"].get("enabled", True):
+            if security_cfg["enabled"]:
                 state.mark_status(mint, "security_checking")
 
                 security_report = await run_stage(
@@ -458,7 +478,10 @@ async def migrated_token_worker(
                     stage="security_report",
                     fn=security_api.main,
                     required=True,
-                    kwargs={"mint": mint, "save_dir": a_dir},
+                    kwargs={
+                        "mint": mint,
+                        "save_dir": a_dir,
+                    },
                 )
 
                 red_flags_result = await run_stage(
@@ -473,11 +496,11 @@ async def migrated_token_worker(
                         "security_report_path": a_dir / "security_report.json",
                         "mint": mint,
                         "save_dir": a_dir,
-                        "config_path": Path(orch_cfg["security"]["red_flags_config"]),
+                        "config_path": Path(security_cfg["red_flags_config"]),
                     },
                 )
 
-                if red_flags_result.get("failed"):
+                if red_flags_result["failed"]:
                     state.mark_status(mint, "dropped_red_flags")
 
                     await log_event(
@@ -486,28 +509,25 @@ async def migrated_token_worker(
                         event_type="coin_dropped_red_flags",
                         mint=mint,
                         payload={
-                            "failed_rules": red_flags_result.get("failed_rules", []),
-                            "keep_partial_onchain": orch_cfg["drop"].get("keep_partial_onchain", True),
+                            "failed_rules": red_flags_result["failed_rules"],
+                            "keep_partial_onchain": drop_cfg["keep_partial_onchain"],
+                            "backfill_on_cancel": backfill_on_cancel,
                         },
                         level="warning",
                     )
 
-                    if orch_cfg["security"].get("cancel_on_red_flags", True):
-                        capture_task.cancel()
-                        await asyncio.gather(capture_task, return_exceptions=True)
+                    if security_cfg["cancel_on_red_flags"]:
+                        await cancel_task(active_capture_task)
 
                     return
 
             meta = metadata_from_security_report(mint, migration_event, security_report)
+            discovered_pair_address = pair_address or meta.get("pair_address")
 
-            if not pair_address and meta.get("pair_address"):
-                await log_event(
-                    cfg,
-                    sink,
-                    event_type="pair_address_found_late",
-                    mint=mint,
-                    payload={"pair_address": meta["pair_address"]},
-                    level="warning",
+            if discovered_pair_address:
+                await switch_to_vault_capture(
+                    str(discovered_pair_address),
+                    "pair_address_found_late" if not pair_address else "pair_address_confirmed",
                 )
 
             state.mark_status(mint, "analytics_running")
@@ -522,9 +542,9 @@ async def migrated_token_worker(
             )
 
             state.mark_status(mint, "waiting_onchain_capture")
-            await capture_task
+            await active_capture_task
 
-            if orch_cfg["dexscreener"].get("enabled", True):
+            if dexscreener_cfg["enabled"]:
                 state.mark_status(mint, "dexscreener_24h")
 
                 await run_stage(
@@ -536,8 +556,8 @@ async def migrated_token_worker(
                     fn=dexscreener.stream_dexscreener_24h,
                     kwargs={
                         "mint": mint,
-                        "interval": int(orch_cfg["dexscreener"]["interval"]),
-                        "length": int(orch_cfg["dexscreener"]["length"]),
+                        "interval": int(dexscreener_cfg["interval"]),
+                        "length": int(dexscreener_cfg["length"]),
                         "save_dir": o_dir,
                     },
                 )
@@ -554,10 +574,7 @@ async def migrated_token_worker(
 
         except Exception as exc:
             state.mark_status(mint, "failed")
-
-            if not capture_task.done():
-                capture_task.cancel()
-                await asyncio.gather(capture_task, return_exceptions=True)
+            await cancel_task(active_capture_task)
 
             await log_event(
                 cfg,

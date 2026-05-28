@@ -24,6 +24,7 @@ data/features/*
 data/labels/*
 data/reports/*
 tmp/*
+data/archive/*
 *.parquet
 *.jsonl
 *.sqlite

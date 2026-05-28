@@ -5,7 +5,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from crypto_trade.core.env import load_env
 from crypto_trade.core.io import append_jsonl, save_json
@@ -32,6 +32,17 @@ def response_row(name: str, response: Any) -> dict[str, Any]:
         "error_message": response.error_message,
         "data": response.data,
     }
+
+
+def merge_accounts(*groups: Iterable[str | None]) -> list[str]:
+    accounts: list[str] = []
+
+    for group in groups:
+        for account in group:
+            if account and account not in accounts:
+                accounts.append(account)
+
+    return accounts
 
 
 def tx_account_keys(tx: dict[str, Any]) -> list[str]:
@@ -375,6 +386,11 @@ async def main(
     max_signatures_per_address: int,
     max_transactions_total: int,
     save_dir: Path | None = None,
+    window_start_ms: int | None = None,
+    pool_state: str | None = None,
+    token_vault: str | None = None,
+    sol_vault: str | None = None,
+    backfill_on_cancel: bool = True,
 ) -> None:
     configure_logging()
     load_env()
@@ -391,9 +407,12 @@ async def main(
     simulated_transactions_path = out / "simulated_transactions.jsonl"
     vault_inference_path = out / "vault_inference.json"
 
-    resolved_watch_accounts = list(dict.fromkeys(watch_accounts))
+    resolved_watch_accounts = merge_accounts(
+        watch_accounts,
+        [pool_state, token_vault, sol_vault],
+    )
 
-    if pair_address:
+    if pair_address and not (token_vault and sol_vault):
         inferred = await infer_vaults(
             rpc=rpc,
             mint=mint,
@@ -402,24 +421,18 @@ async def main(
         )
         save_json(vault_inference_path, inferred)
 
-        inferred_accounts = [
-            inferred.get("pool_state"),
-            inferred.get("token_vault"),
-            inferred.get("sol_vault"),
-        ]
-
-        resolved_watch_accounts = list(
-            dict.fromkeys(
-                [
-                    *resolved_watch_accounts,
-                    *[account for account in inferred_accounts if account],
-                ]
-            )
+        resolved_watch_accounts = merge_accounts(
+            resolved_watch_accounts,
+            [
+                inferred.get("pool_state"),
+                inferred.get("token_vault"),
+                inferred.get("sol_vault"),
+            ],
         )
 
     addresses = list(dict.fromkeys([mint, *resolved_watch_accounts]))
     fee_accounts = resolved_watch_accounts or [mint]
-    start_ms = now_ms()
+    start_ms = window_start_ms or now_ms()
 
     tasks = [
         poll_rpc_methods(
@@ -447,20 +460,26 @@ async def main(
             )
         )
 
+    cancelled = False
+
     try:
         await asyncio.gather(*tasks)
+    except asyncio.CancelledError:
+        cancelled = True
+        raise
     finally:
-        end_ms = now_ms()
+        if not cancelled or backfill_on_cancel:
+            end_ms = now_ms()
 
-        await backfill_transactions(
-            rpc=rpc,
-            path=transactions_path,
-            addresses=addresses,
-            start_ms=start_ms,
-            end_ms=end_ms,
-            max_signatures_per_address=max_signatures_per_address,
-            max_transactions_total=max_transactions_total,
-        )
+            await backfill_transactions(
+                rpc=rpc,
+                path=transactions_path,
+                addresses=addresses,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                max_signatures_per_address=max_signatures_per_address,
+                max_transactions_total=max_transactions_total,
+            )
 
     logger.info("Saved Helius capture to %s", out)
 
@@ -476,6 +495,11 @@ if __name__ == "__main__":
         default=[],
         help="Pool/vault/pool-state account. Repeat for multiple accounts.",
     )
+    parser.add_argument("--pool-state", default=None)
+    parser.add_argument("--token-vault", default=None)
+    parser.add_argument("--sol-vault", default=None)
+    parser.add_argument("--window-start-ms", type=int, default=None)
+    parser.add_argument("--backfill-on-cancel", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--capture-time", type=int, default=1800)
     parser.add_argument("--rpc-interval", type=int, default=60)
@@ -498,5 +522,10 @@ if __name__ == "__main__":
             max_signatures_per_address=args.max_signatures_per_address,
             max_transactions_total=args.max_transactions_total,
             save_dir=args.out_dir,
+            window_start_ms=args.window_start_ms,
+            pool_state=args.pool_state,
+            token_vault=args.token_vault,
+            sol_vault=args.sol_vault,
+            backfill_on_cancel=args.backfill_on_cancel,
         )
     )
