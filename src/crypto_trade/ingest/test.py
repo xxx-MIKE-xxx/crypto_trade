@@ -1,103 +1,345 @@
-"""
-This file tests currently the helius api / websocket stream for one / multiple coins. ]
-It uses getTransactionForAdress, accountSubscribe, getPriorityFeeEstimate, getRecentPerformanceSamples, simulateTransaction
-The file works standalone and saves output to tmp/onchain/<mint>/transactions.json, account_state.jsonl, priority_fee.jsonl, performance_samples.jsonl, simulted_transactions.jsonl (optional)
+from __future__ import annotations
 
-python -m crypto_trade.ingest.test 
---mint FWdgp1fdWkDc5FWeZcJZwGjHtBiBHg1fySWmKURJpump
---capture-time 360
---rpc-interval 5      
-
-"""
-
-
-
-from crypto_trade.ingest.dexscreener import stream_trading_info_multi_coin, stream_trading_info_one_coin
 import argparse
-import json
-from pathlib import Path
-from crypto_trade.core.paths import TMP_DIR
-from crypto_trade.core.io import append_jsonl
 import asyncio
-from crypto_trade.core.rpc import RPC
-from crypto_trade.core.time import now_ms
+import logging
+from pathlib import Path
+from typing import Any
 
+from crypto_trade.core.env import load_env
+from crypto_trade.core.io import append_jsonl, save_json
+from crypto_trade.core.logging_config import configure_logging
+from crypto_trade.core.paths import TMP_DIR
+from crypto_trade.core.rpc import RPC
+from crypto_trade.core.time import now_ms, now_ts
+
+logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = TMP_DIR / "onchain"
 
 
-def save_paths():
-     return [OUTPUT_DIR / "transactions.json", OUTPUT_DIR / "account_state.jsonl",  OUTPUT_DIR / "priority_fee.jsonl", OUTPUT_DIR / "performance_samples.jsonl",  OUTPUT_DIR / "simulted_transactions.jsonl"]
+def response_row(name: str, response: Any) -> dict[str, Any]:
+    return {
+        "timestamp": now_ts(),
+        "local_received_at_ms": now_ms(),
+        "name": name,
+        "http_status": response.http_status,
+        "elapsed_ms": response.elapsed_ms,
+        "rate_limit": response.rate_limit,
+        "error_type": response.error_type,
+        "error_message": response.error_message,
+        "data": response.data,
+    }
 
-async def poll_rpc(rpc, mint, interval, length, pool_address, token_vault_address, sol_vault_address):
-    length_ms = length * 1000
-    start_time = now_ms()
-    transactions_path, account_state_path, priority_fee_path, perf_samples_path, sim_trans_path = save_paths()
-    method =  "getPriorityFeeEstimate"
+
+async def poll_rpc_methods(
+    rpc: RPC,
+    specs: list[dict[str, Any]],
+    interval: int,
+    capture_time: int,
+) -> None:
+    if not specs:
+        return
+
+    start = now_ms()
+
+    while now_ms() - start < capture_time * 1000:
+        for spec in specs:
+            response = await rpc.call_rpc(spec["method"], spec["params"])
+            append_jsonl(spec["path"], response_row(spec["method"], response))
+
+        await asyncio.sleep(interval)
+
+
+async def stream_account(
+    rpc: RPC,
+    path: Path,
+    account: str,
+    capture_time: int,
+) -> None:
     params = [
-                {
-                "accountKeys": [pool_address, token_vault_address, sol_vault_address],
-                "options": {
-                    "priorityLevel": "High"
-                }
-                }
-            ]
-    while True:
-        resp1 = await rpc.call_rpc(method[0], params[0])
-        append_jsonl(priority_fee_path, json.dumps(resp1))
-        asyncio.sleep(interval1)
-        
-    while True:
-        resp2 = await rpc.call_rpc(method[1], params[1])
-        append_jsonl(perf_samples_path, json.dumps(resp2))
-        asyncio.sleep(interval2)
-    
-    while True:
-        resp3 = await rpc.call_rpc(method[2], params[2])
-        append_jsonl(transaction_path, json.dumps(resp3))
-        asyncio.sleep(interval3)
-
-    while True:
-        resp4 = await rpc.call_rpc(method[3], params[3])
-        append_jsonl(sim_trans_path, json.dumps(resp4))
-        asyncio.sleep(interval4)
-
-    if now_ms() - start_time >= length_ms:
-            return 
-
-
-async def stream_websocket(rpc, mint, length,  pool_address, token_vault_address, sol_vault_address):
-    start_time = now_ms()
-    account_state_path = save_paths()[1]
-    method = ""
-    params = [
-         {"pubkey": ...,
-          "encoding": ...
-         }
+        account,
+        {
+            "encoding": "base64",
+            "commitment": "processed",
+        },
     ]
 
-    rpc.connect_websocket(params, method, account_state_path)
-    
-    
+    try:
+        await asyncio.wait_for(
+            rpc.connect_websocket(params, "accountSubscribe", path),
+            timeout=capture_time,
+        )
+    except asyncio.TimeoutError:
+        logger.info("Finished accountSubscribe for %s", account)
 
 
+async def fetch_signatures_for_address(
+    rpc: RPC,
+    address: str,
+    start_ms: int,
+    end_ms: int,
+    max_signatures: int,
+) -> list[str]:
+    signatures: list[str] = []
+    before = None
+    start_s = start_ms // 1000
+    end_s = end_ms // 1000
+
+    while len(signatures) < max_signatures:
+        config: dict[str, Any] = {
+            "limit": min(1000, max_signatures - len(signatures)),
+            "commitment": "confirmed",
+        }
+
+        if before:
+            config["before"] = before
+
+        response = await rpc.call_rpc("getSignaturesForAddress", [address, config])
+        rows = (response.data or {}).get("result") or []
+
+        if not rows:
+            break
+
+        reached_before_window = False
+
+        for row in rows:
+            block_time = row.get("blockTime")
+            signature = row.get("signature")
+
+            if not signature:
+                continue
+
+            if block_time is not None and block_time > end_s:
+                continue
+
+            if block_time is not None and block_time < start_s:
+                reached_before_window = True
+                continue
+
+            signatures.append(signature)
+
+            if len(signatures) >= max_signatures:
+                break
+
+        before = rows[-1].get("signature")
+
+        if reached_before_window or not before:
+            break
+
+    return signatures
 
 
-
-async def main(mint, capture_time, rpc_interval):
-    rpc = RPC()
-    await asyncio.gather(  
-         poll_rpc(),
-         stream_websocket() 
+async def fetch_transaction(rpc: RPC, signature: str) -> dict[str, Any] | None:
+    response = await rpc.call_rpc(
+        "getTransaction",
+        [
+            signature,
+            {
+                "encoding": "jsonParsed",
+                "commitment": "confirmed",
+                "maxSupportedTransactionVersion": 0,
+            },
+        ],
     )
 
-    
+    return (response.data or {}).get("result")
+
+async def backfill_transactions(
+    rpc: RPC,
+    path: Path,
+    addresses: list[str],
+    start_ms: int,
+    end_ms: int,
+    max_signatures_per_address: int,
+    max_transactions_total: int,
+) -> None:
+    signatures: dict[str, set[str]] = {}
+
+    for address in addresses:
+        found = await fetch_signatures_for_address(
+            rpc=rpc,
+            address=address,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            max_signatures=max_signatures_per_address,
+        )
+        for signature in found:
+            signatures.setdefault(signature, set()).add(address)
+    txs: dict[str, dict[str, Any]] = {}
+    start_s = start_ms // 1000
+    end_s = end_ms // 1000
+    for signature, source_addresses in list(signatures.items())[:max_transactions_total]:
+        tx = await fetch_transaction(rpc, signature)
+        if not tx:
+            continue
+        block_time = tx.get("blockTime")
+        if block_time is not None and not (start_s <= block_time <= end_s):
+            continue
+        tx["_source_addresses"] = sorted(source_addresses)
+        txs[signature] = tx
+    transactions = sorted(
+        txs.values(),
+        key=lambda tx: (
+            tx.get("slot") or 10**20,
+            tx.get("transactionIndex") or 10**20,
+        ),
+    )
+    save_json(
+        path,
+        {
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "addresses": addresses,
+            "signature_count": len(signatures),
+            "transaction_count": len(transactions),
+            "estimated_credits": len(addresses) + min(len(signatures), max_transactions_total),
+            "max_signatures_per_address": max_signatures_per_address,
+            "max_transactions_total": max_transactions_total,
+            "transactions": transactions,
+        },
+    )
+
+def build_poll_specs(
+    priority_fee_path: Path,
+    performance_samples_path: Path,
+    simulated_transactions_path: Path,
+    fee_accounts: list[str],
+    simulate_tx_base64: str | None,
+    performance_sample_limit: int,
+) -> list[dict[str, Any]]:
+    specs = []
+
+    if fee_accounts:
+        specs.append(
+            {
+                "method": "getPriorityFeeEstimate",
+                "params": [
+                    {
+                        "accountKeys": fee_accounts,
+                        "options": {
+                            "priorityLevel": "High",
+                            "includeAllPriorityFeeLevels": True,
+                            "lookbackSlots": 150,
+                        },
+                    }
+                ],
+                "path": priority_fee_path,
+            }
+        )
+    specs.append(
+        {
+            "method": "getRecentPerformanceSamples",
+            "params": [max(1, min(performance_sample_limit, 720))],
+            "path": performance_samples_path,
+        }
+    )
+    if simulate_tx_base64:
+        specs.append(
+            {
+                "method": "simulateTransaction",
+                "params": [
+                    simulate_tx_base64,
+                    {
+                        "encoding": "base64",
+                        "commitment": "confirmed",
+                        "sigVerify": False,
+                        "replaceRecentBlockhash": True,
+                    },
+                ],
+                "path": simulated_transactions_path,
+            }
+        )
+    return specs
+
+
+async def main(
+    mint: str,
+    capture_time: int,
+    rpc_interval: int,
+    watch_accounts: list[str],
+    simulate_tx_base64: str | None,
+    performance_sample_limit: int,
+    max_signatures_per_address: int,
+    max_transactions_total: int,
+) -> None:
+    configure_logging()
+    load_env()
+    rpc = RPC()
+    out = OUTPUT_DIR / mint
+    transactions_path = out / "transactions.json"
+    account_state_path = out / "account_state.jsonl"
+    priority_fee_path = out / "priority_fee.jsonl"
+    performance_samples_path = out / "performance_samples.jsonl"
+    simulated_transactions_path = out / "simulated_transactions.jsonl"
+    addresses = list(dict.fromkeys([mint, *watch_accounts]))
+    fee_accounts = watch_accounts or [mint]
+    start_ms = now_ms()
+    tasks = [
+        poll_rpc_methods(
+            rpc=rpc,
+            specs=build_poll_specs(
+                priority_fee_path=priority_fee_path,
+                performance_samples_path=performance_samples_path,
+                simulated_transactions_path=simulated_transactions_path,
+                fee_accounts=fee_accounts,
+                simulate_tx_base64=simulate_tx_base64,
+                performance_sample_limit=performance_sample_limit,
+            ),
+            interval=rpc_interval,
+            capture_time=capture_time,
+        )
+    ]
+    for account in watch_accounts:
+        tasks.append(
+            stream_account(
+                rpc=rpc,
+                path=account_state_path,
+                account=account,
+                capture_time=capture_time,
+            )
+        )
+    await asyncio.gather(*tasks)
+    end_ms = now_ms()
+    await backfill_transactions(
+        rpc=rpc,
+        path=transactions_path,
+        addresses=addresses,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        max_signatures_per_address=max_signatures_per_address,
+        max_transactions_total=max_transactions_total,
+    )
+
+    logger.info("Saved Helius free-plan test capture to %s", out)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mint", help="solana token mint address")
-    parser.add_argument("--capture_time", default=1800, help="length of data collection window in seconds")
-    parser.add_argument("--rpc_interval", default=60, help="interval between requests for priority fees and performance stats - 60 recommended")
+    parser.add_argument("--mint", required=True, help="Solana token mint address")
+    parser.add_argument(
+        "--watch-account",
+        action="append",
+        default=[],
+        help="Pool/vault/pool-state account. Repeat for multiple accounts.",
+    )
+    parser.add_argument("--capture-time", type=int, default=1800)
+    parser.add_argument("--rpc-interval", type=int, default=60)
+    parser.add_argument("--simulate-tx-base64", default=None)
+    parser.add_argument("--performance-sample-limit", type=int, default=60)
+    parser.add_argument("--max-signatures-per-address", type=int, default=1000)
+    parser.add_argument("--max-transactions-total", type=int, default=3000)
     args = parser.parse_args()
-    asyncio.run(main(args.mint, args.caputre_time, args.rpc_interval))
+
+    asyncio.run(
+        main(
+            mint=args.mint,
+            capture_time=args.capture_time,
+            rpc_interval=args.rpc_interval,
+            watch_accounts=args.watch_account,
+            simulate_tx_base64=args.simulate_tx_base64,
+            performance_sample_limit=args.performance_sample_limit,
+            max_signatures_per_address=args.max_signatures_per_address,
+            max_transactions_total=args.max_transactions_total,
+        )
+    )

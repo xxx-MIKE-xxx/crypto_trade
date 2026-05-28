@@ -17,6 +17,7 @@ from crypto_trade.core.env import get_env, load_env
 from crypto_trade.core.http import request_json
 from crypto_trade.core.paths import ENV_FILE
 from crypto_trade.core.io import append_jsonl
+from crypto_trade.core.time import now_ms
 
 logger = logging.getLogger(__name__)
 load_env()
@@ -92,21 +93,41 @@ class RPC:
             "method": method,
             "params": params,
         }
+
         url = f"wss://mainnet.helius-rpc.com/?api-key={self.api_key}"
+
         async with websockets.connect(
-            url, 
+            url,
             ping_interval=ping_interval,
             ping_timeout=ping_timeout,
         ) as ws:
             await ws.send(json.dumps(subscribe_msg))
-
             response = json.loads(await ws.recv())
             logger.info("Subscription response: %s", response)
-
+            append_jsonl(
+                file_path,
+                {
+                    "type": "subscription_response",
+                    "local_received_at_ms": now_ms(),
+                    "method": method,
+                    "params": params,
+                    "data": response,
+                },
+            )
             while True:
                 msg = await ws.recv()
                 data = json.loads(msg)
-                append_jsonl(file_path, data)
+
+                append_jsonl(
+                    file_path,
+                    {
+                        "type": "websocket_message",
+                        "local_received_at_ms": now_ms(),
+                        "method": method,
+                        "params": params,
+                        "data": data,
+                    },
+                )
 
     @staticmethod
     def load_wallet_keypair(keypair_bytes):
