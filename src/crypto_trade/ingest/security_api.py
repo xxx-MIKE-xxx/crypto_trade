@@ -164,6 +164,26 @@ async def download_dexscreener(mint: str):
     return response
 
 
+def response_to_dict(response: Any) -> dict[str, Any]:
+    if isinstance(response, Exception):
+        return {
+            "data": None,
+            "http_status": None,
+            "error_type": type(response).__name__,
+            "error_message": str(response),
+            "elapsed_ms": None,
+            "rate_limit": {},
+        }
+
+    return {
+        "data": getattr(response, "data", None),
+        "http_status": getattr(response, "http_status", None),
+        "error_type": getattr(response, "error_type", None),
+        "error_message": getattr(response, "error_message", None),
+        "elapsed_ms": getattr(response, "elapsed_ms", None),
+        "rate_limit": getattr(response, "rate_limit", {}),
+    }
+
 async def collect_security_report(mint: str) -> dict[str, Any]:
     names = [
         "rugcheck",
@@ -182,7 +202,11 @@ async def collect_security_report(mint: str) -> dict[str, Any]:
         return_exceptions=True,
     )
 
-    output = dict(zip(names, reports))
+    output = {
+        name: response_to_dict(report)
+        for name, report in zip(names, reports)
+    }
+
     output["mint"] = mint
     output["time"] = now_ts()
 

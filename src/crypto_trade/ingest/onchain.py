@@ -374,12 +374,15 @@ async def main(
     performance_sample_limit: int,
     max_signatures_per_address: int,
     max_transactions_total: int,
+    save_dir: Path | None = None,
 ) -> None:
     configure_logging()
     load_env()
 
     rpc = RPC()
-    out = OUTPUT_DIR / mint
+
+    out = save_dir if save_dir is not None else OUTPUT_DIR / mint
+    out.mkdir(parents=True, exist_ok=True)
 
     transactions_path = out / "transactions.json"
     account_state_path = out / "account_state.jsonl"
@@ -404,8 +407,14 @@ async def main(
             inferred.get("token_vault"),
             inferred.get("sol_vault"),
         ]
+
         resolved_watch_accounts = list(
-            dict.fromkeys([*resolved_watch_accounts, *[a for a in inferred_accounts if a]])
+            dict.fromkeys(
+                [
+                    *resolved_watch_accounts,
+                    *[account for account in inferred_accounts if account],
+                ]
+            )
         )
 
     addresses = list(dict.fromkeys([mint, *resolved_watch_accounts]))
@@ -438,19 +447,20 @@ async def main(
             )
         )
 
-    await asyncio.gather(*tasks)
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        end_ms = now_ms()
 
-    end_ms = now_ms()
-
-    await backfill_transactions(
-        rpc=rpc,
-        path=transactions_path,
-        addresses=addresses,
-        start_ms=start_ms,
-        end_ms=end_ms,
-        max_signatures_per_address=max_signatures_per_address,
-        max_transactions_total=max_transactions_total,
-    )
+        await backfill_transactions(
+            rpc=rpc,
+            path=transactions_path,
+            addresses=addresses,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            max_signatures_per_address=max_signatures_per_address,
+            max_transactions_total=max_transactions_total,
+        )
 
     logger.info("Saved Helius capture to %s", out)
 
@@ -466,6 +476,7 @@ if __name__ == "__main__":
         default=[],
         help="Pool/vault/pool-state account. Repeat for multiple accounts.",
     )
+    parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--capture-time", type=int, default=1800)
     parser.add_argument("--rpc-interval", type=int, default=60)
     parser.add_argument("--simulate-tx-base64", default=None)
@@ -486,5 +497,6 @@ if __name__ == "__main__":
             performance_sample_limit=args.performance_sample_limit,
             max_signatures_per_address=args.max_signatures_per_address,
             max_transactions_total=args.max_transactions_total,
+            save_dir=args.out_dir,
         )
     )

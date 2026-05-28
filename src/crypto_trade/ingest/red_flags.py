@@ -553,40 +553,80 @@ RULE_FUNCTIONS = {
 }
 
 
-def load_rule_params(config_path: Path | None = None) -> dict[str, dict[str, Any]]:
-    params = {name: dict(values) for name, values in DEFAULT_RULE_PARAMS.items()}
+def load_rule_config(config_path: Path | None = None) -> dict[str, dict[str, Any]]:
+    config: dict[str, dict[str, Any]] = {}
+
+    for rule_name, default_params in DEFAULT_RULE_PARAMS.items():
+        config[rule_name] = {
+            "enabled": True,
+            "required": False,
+            "params": dict(default_params),
+        }
+
+    for rule_name in RULE_FUNCTIONS:
+        config.setdefault(
+            rule_name,
+            {
+                "enabled": True,
+                "required": False,
+                "params": {},
+            },
+        )
 
     path = config_path or DEFAULT_CONFIG_PATH
     if not path.exists():
-        return params
+        return config
 
     try:
         raw = load_yaml(path) or {}
     except Exception as exc:
         logger.warning("Failed to load red-flag config %s: %s", path, exc)
-        return params
+        return config
 
-    configured_rules = raw.get("rules", raw)
-    if not isinstance(configured_rules, dict):
-        return params
+    rules = raw.get("rules", raw)
+    if not isinstance(rules, dict):
+        return config
 
-    for rule_name, rule_params in configured_rules.items():
-        if not isinstance(rule_params, dict):
+    for rule_name, rule_cfg in rules.items():
+        rule_name = str(rule_name)
+
+        if not isinstance(rule_cfg, dict):
             continue
 
-        params.setdefault(str(rule_name), {}).update(rule_params)
+        config.setdefault(
+            rule_name,
+            {
+                "enabled": True,
+                "required": False,
+                "params": {},
+            },
+        )
 
-    return params
+        config[rule_name]["enabled"] = bool(rule_cfg.get("enabled", True))
+        config[rule_name]["required"] = bool(rule_cfg.get("required", False))
 
+        yaml_params = rule_cfg.get("params", {})
+        if isinstance(yaml_params, dict):
+            config[rule_name]["params"].update(yaml_params)
+
+    return config
+
+
+def load_rule_params(config_path: Path | None = None) -> dict[str, dict[str, Any]]:
+    """Backward-compatible helper if anything still imports load_rule_params."""
+    return {
+        rule_name: dict(rule_cfg.get("params", {}))
+        for rule_name, rule_cfg in load_rule_config(config_path).items()
+    }
 
 def evaluate_red_flags(
     security_report: dict[str, Any],
     dex_features: dict[str, Any] | None = None,
     *,
-    rule_params: dict[str, dict[str, Any]] | None = None,
+    rule_config: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     dex_features = dex_features or {}
-    rule_params = rule_params or {}
+    rule_config = rule_config or load_rule_config()
 
     results: dict[str, Any] = {}
 
@@ -596,16 +636,62 @@ def evaluate_red_flags(
         mint = None
 
     for rule_name, fn in RULE_FUNCTIONS.items():
+        cfg = rule_config.get(
+            rule_name,
+            {
+                "enabled": True,
+                "required": False,
+                "params": {},
+            },
+        )
+
+        enabled = bool(cfg.get("enabled", True))
+        required = bool(cfg.get("required", False))
+        params = cfg.get("params", {}) or {}
+
+        if not enabled:
+            results[rule_name] = {
+                "status": False,
+                "reason": None,
+                "enabled": False,
+                "required": required,
+                "skipped": True,
+                "missing_data": False,
+            }
+            continue
+
         try:
-            params = rule_params.get(rule_name, {})
             result = fn(security_report, dex_features, **params)
         except Exception as exc:
             result = {
-                "status": True,
-                "reason": f"Rule evaluation error: {type(exc).__name__}: {exc}",
+                "status": required,
+                "reason": (
+                    f"Required rule evaluation error: {type(exc).__name__}: {exc}"
+                    if required
+                    else None
+                ),
+                "enabled": True,
+                "required": required,
+                "skipped": False,
                 "missing_data": False,
                 "error": True,
+                "error_message": f"{type(exc).__name__}: {exc}",
             }
+            results[rule_name] = result
+            continue
+
+        result["enabled"] = True
+        result["required"] = required
+        result.setdefault("skipped", False)
+        result.setdefault("missing_data", False)
+
+        if result.get("missing_data") and not required:
+            result["status"] = False
+            result["ignored_missing_data"] = True
+
+        if result.get("missing_data") and required:
+            result["status"] = True
+            result["ignored_missing_data"] = False
 
         results[rule_name] = result
 
@@ -621,6 +707,12 @@ def evaluate_red_flags(
         if isinstance(result, dict) and result.get("missing_data")
     ]
 
+    skipped_rules = [
+        rule_name
+        for rule_name, result in results.items()
+        if isinstance(result, dict) and result.get("skipped")
+    ]
+
     return {
         **results,
         "mint": mint,
@@ -628,8 +720,8 @@ def evaluate_red_flags(
         "failed": bool(failed_rules),
         "failed_rules": failed_rules,
         "missing_data_rules": missing_data_rules,
+        "skipped_rules": skipped_rules,
     }
-
 
 def red_flags_path(
     mint: str | None,
@@ -666,12 +758,13 @@ def main(
     else:
         dex_features = security_report.get("dexscreener", {}) if isinstance(security_report, dict) else {}
 
-    rule_params = load_rule_params(config_path)
+    rule_config = load_rule_config(config_path)
     output = evaluate_red_flags(
         security_report=security_report,
         dex_features=dex_features,
-        rule_params=rule_params,
+        rule_config=rule_config,
     )
+
 
     resolved_mint = mint or output.get("mint")
     path = red_flags_path(resolved_mint, save_dir=save_dir, output_path=output_path)

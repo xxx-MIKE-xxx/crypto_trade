@@ -149,7 +149,11 @@ async def pumpportal_loop(
     last_event_time = asyncio.get_running_loop().time()
 
     try:
-        async for event in listen(mints=True, migrations=True):
+        async for event in listen(
+            mints=True,
+            migrations=True,
+            url=cfg.pumpportal_url,
+        ):
             if stop.is_set():
                 break
 

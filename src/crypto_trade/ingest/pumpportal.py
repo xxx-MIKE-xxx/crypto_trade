@@ -60,30 +60,45 @@ async def subscribe_migration(websocket):
     await websocket.send(json.dumps(payload))
 
 
-async def listen(mints=True, migrations=True):
+async def listen(
+    mints: bool = True,
+    migrations: bool = True,
+    url: str | None = None,
+):
     retry_delay = RETRY_INITIAL_DELAY
+    ws_url = url or BASE_URL
+
     while True:
-            try:
-                async with connect(BASE_URL) as websocket:
-                    retry_delay = RETRY_INITIAL_DELAY
-                    if mints:
-                        await subscribe_new_token(websocket)
-                    if migrations:
-                        await subscribe_migration(websocket)
-                    async for message in websocket:
-                        msg = json.loads(message)
-                        msg_type = type_of_msg(msg)
-                        if msg_type in {"mint", "migration"}:
-                            yield {
-                                "time": utc_now_iso_ms_z(),
-                                "type": msg_type,
-                                **msg
-                            }
-            except (OSError, websockets.exceptions.ConnectionClosed, websockets.exceptions.InvalidHandshake,
-                                websockets.exceptions.InvalidStatus) as e:
-                logger.warning("Connection lost - reconnecting %s", e)
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(retry_delay * 2, RETRY_MAX_DELAY)
+        try:
+            async with connect(ws_url) as websocket:
+                retry_delay = RETRY_INITIAL_DELAY
+
+                if mints:
+                    await subscribe_new_token(websocket)
+
+                if migrations:
+                    await subscribe_migration(websocket)
+
+                async for message in websocket:
+                    msg = json.loads(message)
+                    msg_type = type_of_msg(msg)
+
+                    if msg_type in {"mint", "migration"}:
+                        yield {
+                            "time": utc_now_iso_ms_z(),
+                            "type": msg_type,
+                            **msg,
+                        }
+
+        except (
+            OSError,
+            websockets.exceptions.ConnectionClosed,
+            websockets.exceptions.InvalidHandshake,
+            websockets.exceptions.InvalidStatus,
+        ) as e:
+            logger.warning("Connection lost - reconnecting %s", e)
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, RETRY_MAX_DELAY)
 
 async def main():
     configure_logging()

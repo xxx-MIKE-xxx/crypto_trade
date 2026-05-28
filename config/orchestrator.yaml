@@ -1,0 +1,27 @@
+onchain:
+  capture_time: 300
+  rpc_interval: 10
+  infer_vaults_limit: 30
+  performance_sample_limit: 60
+  max_signatures_per_address: 300
+  max_transactions_total: 500
+  simulate_tx_base64: null
+
+security:
+  enabled: true
+  cancel_on_red_flags: true
+  red_flags_config: config/red_flags.yaml
+
+analytics:
+  website_enabled: true
+  twitter_enabled: true
+  telegram_enabled: true
+  twitter_posts_limit: 20
+
+dexscreener:
+  enabled: true
+  interval: 60
+  length: 1800
+
+drop:
+  keep_partial_onchain: true

@@ -10,7 +10,7 @@ from typing import Any
 from crypto_trade.core.env import get_env, load_env
 from crypto_trade.core.io import save_json
 from crypto_trade.core.logging_config import configure_logging
-from crypto_trade.core.paths import ANALYTICS_DIR, TELEGRAM_CONFIG
+from crypto_trade.core.paths import ANALYTICS_DIR, PROJECT_ROOT, TELEGRAM_CONFIG
 from crypto_trade.core.telegram import TELEGRAM
 from crypto_trade.core.yaml import get_yaml_value
 
@@ -21,10 +21,11 @@ OUTPUT_FILENAME = "telegram_messages.json"
 TG_MSG_LIMIT = int(get_yaml_value(TELEGRAM_CONFIG, "TG_MSG_LIMIT"))
 TG_API_HASH = get_env("TG_API_HASH")
 TG_API_ID = int(get_env("TG_API_ID"))
+TG_SESSION_PATH = PROJECT_ROOT / "app_data" / "meme_metrics_session"
 
 
 async def collect_history(channel_name: str) -> list[dict[str, Any]]:
-    async with TELEGRAM(TG_API_ID, TG_API_HASH) as tg:
+    async with TELEGRAM(TG_API_ID, TG_API_HASH, session_path=TG_SESSION_PATH) as tg:
         await tg.join_channel(channel_name)
         messages = await tg.collect_messages(channel_name, limit=TG_MSG_LIMIT)
         return messages

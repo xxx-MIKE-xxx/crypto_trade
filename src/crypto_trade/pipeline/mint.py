@@ -88,3 +88,42 @@ def classify_pumpportal_event(payload: Mapping[str, Any]) -> str:
         return "migration"
 
     return "pumpportal_event"
+
+
+PAIR_KEYS = {
+    "pair",
+    "pairaddress",
+    "pool",
+    "pooladdress",
+    "raydiumpool",
+    "raydiumpooladdress",
+    "amm",
+    "ammid",
+    "market",
+    "marketid",
+}
+
+def extract_pair_address(obj: Any) -> str | None:
+    if isinstance(obj, Mapping):
+        for k, v in obj.items():
+            key = str(k).replace("_", "").replace("-", "").lower()
+            if key in PAIR_KEYS and looks_like_solana_address(v):
+                return str(v)
+
+            if isinstance(v, Mapping):
+                nested = extract_pair_address(v)
+                if nested:
+                    return nested
+
+        for v in obj.values():
+            nested = extract_pair_address(v)
+            if nested:
+                return nested
+
+    elif isinstance(obj, list):
+        for item in obj:
+            nested = extract_pair_address(item)
+            if nested:
+                return nested
+
+    return None

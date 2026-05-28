@@ -10,11 +10,11 @@ configure_logging()
 
 
 class TELEGRAM:
-    def __init__(self, TG_API_ID, TG_API_HASH):
+    def __init__(self, TG_API_ID, TG_API_HASH, session_path="meme_metrics_session"):
         self.TG_API_ID = TG_API_ID
         self.TG_API_HASH = TG_API_HASH
-        self.client = TelegramClient("meme_metrics_session", self.TG_API_ID, self.TG_API_HASH)
-
+        self.session_path = str(session_path)
+        self.client = TelegramClient(self.session_path, self.TG_API_ID, self.TG_API_HASH)
     async def __aenter__(self):
         await self.client.start()
         return self
