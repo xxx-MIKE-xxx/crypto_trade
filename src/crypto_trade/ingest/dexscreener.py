@@ -39,6 +39,8 @@ import json
 from dotenv import load_dotenv
 import asyncio
 import logging
+from pathlib import Path
+from crypto_trade.core.paths import ONCHAIN_DIR
 from crypto_trade.core.http import request_json
 from crypto_trade.core.logging_config import configure_logging
 from crypto_trade.core.time import now_ts, now_ms
@@ -53,6 +55,66 @@ DEXSCREENER_BASE = "https://api.dexscreener.com"
 
 CHAIN_ID = "solana"
 
+DEXSCREENER_24H_FILENAME = "dexscreener_24h.jsonl"
+
+
+def dexscreener_24h_path(mint: str, save_dir: Path | None = None) -> Path:
+    if save_dir is not None:
+        return save_dir / DEXSCREENER_24H_FILENAME
+
+    return ONCHAIN_DIR / mint / DEXSCREENER_24H_FILENAME
+
+
+async def stream_dexscreener_24h(
+    mint: str,
+    interval: int = 60,
+    length: int = 24 * 60 * 60,
+    save_dir: Path | None = None,
+) -> Path:
+    path = dexscreener_24h_path(mint, save_dir)
+    start_ms = now_ms()
+    length_ms = length * 1000
+
+    while now_ms() - start_ms <= length_ms:
+        try:
+            response = await trading_info_multi_pool(mint)
+
+            append_jsonl(
+                path,
+                {
+                    "timestamp": now_ts(),
+                    "local_received_at_ms": now_ms(),
+                    "source": "dexscreener",
+                    "method": "token-pairs",
+                    "mint": mint,
+                    "http_status": response.http_status,
+                    "elapsed_ms": response.elapsed_ms,
+                    "rate_limit": response.rate_limit,
+                    "error_type": response.error_type,
+                    "error_message": response.error_message,
+                    "data": response.data,
+                },
+            )
+
+        except Exception as exc:
+            logger.exception("DexScreener 24h polling failed for %s: %s", mint, exc)
+            append_jsonl(
+                path,
+                {
+                    "timestamp": now_ts(),
+                    "local_received_at_ms": now_ms(),
+                    "source": "dexscreener",
+                    "method": "token-pairs",
+                    "mint": mint,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                    "data": None,
+                },
+            )
+
+        await asyncio.sleep(interval)
+
+    return path
 
 def json_default(obj):
     if is_dataclass(obj) and not isinstance(obj, type):
@@ -170,9 +232,25 @@ async def main(mint):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("mint", help="solana token mint address")
+    parser.add_argument("mint", help="Solana token mint address")
+    parser.add_argument("--stream-24h", action="store_true")
+    parser.add_argument("--interval", type=int, default=60)
+    parser.add_argument("--length", type=int, default=24 * 60 * 60)
+    parser.add_argument("--out-dir", type=Path, default=None)
     args = parser.parse_args()
-    data = asyncio.run(main(args.mint))
-    print(json.dumps(data, indent=2, ensure_ascii=False, default=json_default))
-    with open("tmp/dex_screener_report.json", "w", encoding="utf-8") as f:
-        json.dump(data, indent=2, ensure_ascii=False, default=json_default, fp=f)
+
+    configure_logging()
+
+    if args.stream_24h:
+        path = asyncio.run(
+            stream_dexscreener_24h(
+                mint=args.mint,
+                interval=args.interval,
+                length=args.length,
+                save_dir=args.out_dir,
+            )
+        )
+        print(json.dumps({"saved_to": str(path)}, indent=2))
+    else:
+        data = asyncio.run(main(args.mint))
+        print(json.dumps(data, indent=2, ensure_ascii=False, default=json_default))

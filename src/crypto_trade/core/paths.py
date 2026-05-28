@@ -8,6 +8,7 @@ RAW_DIR = DATA_DIR / "raw"
 ANALYTICS_DIR = RAW_DIR / "analytics"
 MIGRATIONS_DIR = RAW_DIR / "migrations"
 ONCHAIN_DIR = RAW_DIR / "onchain"
+ORCHESTRATOR_DIR = RAW_DIR / "orchestrator"
 
 BRONZE_DIR = DATA_DIR / "bronze"
 SILVER_DIR = DATA_DIR / "silver"
