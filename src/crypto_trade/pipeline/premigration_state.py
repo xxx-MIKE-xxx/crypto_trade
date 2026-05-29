@@ -38,6 +38,8 @@ class PreMigrationState:
                 empty_polls INTEGER NOT NULL DEFAULT 0,
                 inactive_polls INTEGER NOT NULL DEFAULT 0,
                 priority_score REAL NOT NULL DEFAULT 0,
+                max_market_cap_usd REAL NOT NULL DEFAULT 0,
+                enrichment_reason TEXT,
                 dead_reason TEXT,
                 dead_ts TEXT,
                 security_report_ts TEXT,
@@ -61,8 +63,14 @@ class PreMigrationState:
             """
         )
 
-        self._ensure_column("mints", "inactive_polls", "INTEGER NOT NULL DEFAULT 0")
-        self._ensure_column("mints", "dead_ts", "TEXT")
+        for column, definition in {
+            "inactive_polls": "INTEGER NOT NULL DEFAULT 0",
+            "max_market_cap_usd": "REAL NOT NULL DEFAULT 0",
+            "enrichment_reason": "TEXT",
+            "dead_ts": "TEXT",
+        }.items():
+            self._ensure_column("mints", column, definition)
+
         for column in ENRICHMENT_COLUMNS.values():
             self._ensure_column("mints", column, "TEXT")
 
@@ -155,6 +163,16 @@ class PreMigrationState:
             (utc_now_iso_ms_z(), utc_now_iso_ms_z(), mint),
         )
 
+    def mark_enrichment_selected(self, mint: str, reason: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE mints
+            SET enrichment_reason = COALESCE(enrichment_reason, ?), updated_ts = ?
+            WHERE mint = ?
+            """,
+            (reason, utc_now_iso_ms_z(), mint),
+        )
+
     def update_after_dex_poll(
         self,
         mint: str,
@@ -162,6 +180,7 @@ class PreMigrationState:
         has_pairs: bool,
         inactive: bool,
         score: float,
+        market_cap_usd: float,
         next_poll_ms: int,
         no_pair_dead_ms: int,
         inactive_dead_ms: int,
@@ -200,8 +219,9 @@ class PreMigrationState:
             UPDATE mints
             SET status = ?, last_dex_poll_ms = ?, next_dex_poll_ms = ?,
                 dex_polls = dex_polls + 1, empty_polls = ?, inactive_polls = ?,
-                priority_score = ?, dead_reason = COALESCE(?, dead_reason),
-                dead_ts = COALESCE(?, dead_ts), updated_ts = ?
+                priority_score = ?, max_market_cap_usd = MAX(max_market_cap_usd, ?),
+                dead_reason = COALESCE(?, dead_reason), dead_ts = COALESCE(?, dead_ts),
+                updated_ts = ?
             WHERE mint = ?
             """,
             (
@@ -211,6 +231,7 @@ class PreMigrationState:
                 empty_polls,
                 inactive_polls,
                 score,
+                market_cap_usd,
                 dead_reason,
                 dead_ts,
                 utc_now_iso_ms_z(),
@@ -218,6 +239,34 @@ class PreMigrationState:
             ),
         )
         return {"status": status, "dead_reason": dead_reason, "inactive_polls": inactive_polls}
+
+    def dashboard_stats(self, trigger_market_cap_usd: float) -> dict[str, int]:
+        row = self.conn.execute(
+            """
+            SELECT
+                COUNT(*),
+                SUM(status = 'active'),
+                SUM(status = 'migrated'),
+                SUM(status = 'dead'),
+                SUM(status = 'expired'),
+                SUM(max_market_cap_usd >= ?),
+                SUM(enrichment_reason LIKE 'market_cap_control_sample%'),
+                SUM(enrichment_reason = 'market_cap_threshold'),
+                SUM(security_report_ts IS NOT NULL),
+                SUM(twitter_lite_ts IS NOT NULL),
+                SUM(telegram_lite_ts IS NOT NULL),
+                SUM(website_report_ts IS NOT NULL),
+                SUM(next_dex_poll_ms <= ? AND status NOT IN ('dead', 'expired'))
+            FROM mints
+            """,
+            (trigger_market_cap_usd, now_ms()),
+        ).fetchone()
+        keys = [
+            "mints_seen", "active", "migrated", "dead", "expired", "tracking_level_reached",
+            "random_analytics_sampled", "threshold_analytics_selected", "security_reports",
+            "twitter_lite_reports", "telegram_lite_reports", "website_reports", "due_now",
+        ]
+        return {key: int(value or 0) for key, value in zip(keys, row)}
 
     def close(self) -> None:
         self.conn.close()
