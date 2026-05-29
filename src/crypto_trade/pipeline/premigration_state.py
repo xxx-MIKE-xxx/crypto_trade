@@ -7,6 +7,13 @@ from typing import Any
 from crypto_trade.core.text import compact_json_dumps, short_hash
 from crypto_trade.core.time import now_ms, utc_now_iso_ms_z
 
+ENRICHMENT_COLUMNS = {
+    "security": "security_report_ts",
+    "twitter_lite": "twitter_lite_ts",
+    "telegram_lite": "telegram_lite_ts",
+    "website": "website_report_ts",
+}
+
 
 class PreMigrationState:
     def __init__(self, path: Path) -> None:
@@ -32,6 +39,9 @@ class PreMigrationState:
                 priority_score REAL NOT NULL DEFAULT 0,
                 dead_reason TEXT,
                 security_report_ts TEXT,
+                twitter_lite_ts TEXT,
+                telegram_lite_ts TEXT,
+                website_report_ts TEXT,
                 updated_ts TEXT NOT NULL
             );
 
@@ -48,7 +58,9 @@ class PreMigrationState:
             ON mints(status, next_dex_poll_ms, priority_score);
             """
         )
-        self._ensure_column("mints", "security_report_ts", "TEXT")
+
+        for column in ENRICHMENT_COLUMNS.values():
+            self._ensure_column("mints", column, "TEXT")
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
@@ -124,16 +136,18 @@ class PreMigrationState:
         ).fetchone()
         return max(0, now_ms() - int(row[0])) if row else 0
 
-    def security_due(self, mint: str) -> bool:
+    def enrichment_due(self, mint: str, kind: str) -> bool:
+        column = ENRICHMENT_COLUMNS[kind]
         row = self.conn.execute(
-            "SELECT security_report_ts FROM mints WHERE mint = ?",
+            f"SELECT {column} FROM mints WHERE mint = ?",
             (mint,),
         ).fetchone()
         return bool(row and row[0] is None)
 
-    def mark_security_reported(self, mint: str) -> None:
+    def mark_enrichment_done(self, mint: str, kind: str) -> None:
+        column = ENRICHMENT_COLUMNS[kind]
         self.conn.execute(
-            "UPDATE mints SET security_report_ts = ?, updated_ts = ? WHERE mint = ?",
+            f"UPDATE mints SET {column} = ?, updated_ts = ? WHERE mint = ?",
             (utc_now_iso_ms_z(), utc_now_iso_ms_z(), mint),
         )
 
