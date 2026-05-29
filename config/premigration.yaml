@@ -20,7 +20,23 @@ polling:
 dead_detection:
   no_pair_after_minutes: 60
 
-security:
-  enabled: true
+selection:
   migration_market_cap_usd: 69000
   trigger_fraction: 0.5
+  random_sample_rate: 0.02
+
+enrichment_limits:
+  security_per_minute: 30
+  twitter_lite_per_minute: 3
+  telegram_lite_per_minute: 3
+  website_per_minute: 6
+
+enrichment:
+  security:
+    enabled: true
+  twitter_lite:
+    enabled: true
+  telegram_lite:
+    enabled: true
+  website:
+    enabled: true
