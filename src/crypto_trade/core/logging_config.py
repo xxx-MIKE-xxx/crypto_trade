@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
-from crypto_trade.core.paths import LOGS_DIR
+
 from crypto_trade.core.io import ensure_dir
+from crypto_trade.core.paths import LOGS_DIR
+
+
+NOISY_LOGGERS = ["httpx", "httpcore"]
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -14,8 +18,11 @@ def configure_logging(level: str = "INFO") -> None:
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-        handlers = [
+        handlers=[
             logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler()
-        ]
+            logging.StreamHandler(),
+        ],
     )
+
+    for name in NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
