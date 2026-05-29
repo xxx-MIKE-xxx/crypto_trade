@@ -9,7 +9,15 @@ from crypto_trade.core.io import append_jsonl
 from crypto_trade.core.paths import CONFIG_DIR
 from crypto_trade.core.time import now_ms, utc_now_iso_ms_z
 from crypto_trade.core.yaml import load_yaml
-from crypto_trade.ingest import dexscreener, onchain, red_flags, security_api, telegram_info, twitter
+from crypto_trade.ingest import (
+    dexscreener,
+    holder_data,
+    onchain,
+    red_flags,
+    security_api,
+    telegram_info,
+    twitter,
+)
 from crypto_trade.ingest import website_grader
 from crypto_trade.ingest.bronze import EventSink
 from crypto_trade.pipeline.config import PipelineConfig
@@ -227,8 +235,8 @@ def remaining_capture_seconds(start_ms: int, total_seconds: int) -> int:
     return max(0, total_seconds - elapsed_seconds)
 
 
-async def cancel_task(task: asyncio.Task[Any]) -> None:
-    if not task.done():
+async def cancel_task(task: asyncio.Task[Any] | None) -> None:
+    if task is not None and not task.done():
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
@@ -265,11 +273,43 @@ def start_onchain_capture(
                 "infer_vaults_limit": int(onchain_cfg["infer_vaults_limit"]),
                 "simulate_tx_base64": onchain_cfg.get("simulate_tx_base64"),
                 "performance_sample_limit": int(onchain_cfg["performance_sample_limit"]),
-                "max_signatures_per_address": optional_int(onchain_cfg.get("max_signatures_per_address")),
+                "max_signatures_per_address": optional_int(
+                    onchain_cfg.get("max_signatures_per_address")
+                ),
                 "max_transactions_total": optional_int(onchain_cfg.get("max_transactions_total")),
                 "save_dir": save_dir,
                 "window_start_ms": window_start_ms,
                 "backfill_on_cancel": backfill_on_cancel,
+            },
+        )
+    )
+
+
+def start_holder_snapshots(
+    *,
+    cfg: PipelineConfig,
+    state: StateStore,
+    sink: EventSink,
+    mint: str,
+    holder_cfg: dict[str, Any],
+    save_dir: Path,
+) -> asyncio.Task[Any] | None:
+    if not holder_cfg.get("enabled", False):
+        return None
+
+    return asyncio.create_task(
+        run_stage(
+            cfg=cfg,
+            state=state,
+            sink=sink,
+            mint=mint,
+            stage="holder_largest_accounts",
+            fn=holder_data.main,
+            kwargs={
+                "mint": mint,
+                "save_dir": save_dir,
+                "schedule": holder_cfg.get("schedule"),
+                "largest_accounts": bool(holder_cfg.get("largest_accounts", True)),
             },
         )
     )
@@ -381,6 +421,7 @@ async def migrated_token_worker(
         security_cfg = orch_cfg["security"]
         dexscreener_cfg = orch_cfg["dexscreener"]
         drop_cfg = orch_cfg["drop"]
+        holder_cfg = orch_cfg.get("holder_snapshots", {})
 
         a_dir = analytics_dir(cfg, mint)
         o_dir = onchain_dir(cfg, mint)
@@ -408,6 +449,15 @@ async def migrated_token_worker(
                 "pair_address": pair_address,
                 "capture_start_ms": capture_start_ms,
             },
+        )
+
+        holder_task = start_holder_snapshots(
+            cfg=cfg,
+            state=state,
+            sink=sink,
+            mint=mint,
+            holder_cfg=holder_cfg,
+            save_dir=o_dir,
         )
 
         active_capture_task = start_onchain_capture(
@@ -465,10 +515,10 @@ async def migrated_token_worker(
                 backfill_on_cancel=backfill_on_cancel,
             )
 
-        if pair_address:
-            await switch_to_vault_capture(pair_address, "pair_address_found_initially")
-
         try:
+            if pair_address:
+                await switch_to_vault_capture(pair_address, "pair_address_found_initially")
+
             security_report = {}
 
             if security_cfg["enabled"]:
@@ -516,9 +566,12 @@ async def migrated_token_worker(
                             "failed_rules": red_flags_result["failed_rules"],
                             "keep_partial_onchain": drop_cfg["keep_partial_onchain"],
                             "backfill_on_cancel": backfill_on_cancel,
+                            "cancelled_holder_snapshots": bool(holder_task),
                         },
                         level="warning",
                     )
+
+                    await cancel_task(holder_task)
 
                     if security_cfg["cancel_on_red_flags"]:
                         await cancel_task(active_capture_task)
@@ -566,6 +619,9 @@ async def migrated_token_worker(
                     },
                 )
 
+            if holder_task:
+                await holder_task
+
             state.mark_status(mint, "reports_done")
 
             await log_event(
@@ -579,6 +635,7 @@ async def migrated_token_worker(
         except Exception as exc:
             state.mark_status(mint, "failed")
             await cancel_task(active_capture_task)
+            await cancel_task(holder_task)
 
             await log_event(
                 cfg,
