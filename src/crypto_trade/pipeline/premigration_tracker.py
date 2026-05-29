@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import json
 import logging
 import math
 from pathlib import Path
@@ -21,7 +22,6 @@ from crypto_trade.ingest.pumpportal import listen
 from crypto_trade.pipeline.premigration_state import PreMigrationState
 
 CONFIG_PATH = CONFIG_DIR / "premigration.yaml"
-BATCH_SIZE = 30
 RETRYABLE_ERRORS = {"TimeoutError", "ReadTimeout", "ConnectTimeout", "PoolTimeout", "RateLimitError"}
 TWITTER_RESERVED_PATHS = {
     "i", "home", "explore", "search", "notifications", "messages", "settings",
@@ -42,6 +42,10 @@ def date_key() -> str:
 
 def raw_event_path(root: Path) -> Path:
     return root / "pumpportal" / f"{date_key()}.jsonl"
+
+
+def shared_pumpportal_path(cfg: dict[str, Any]) -> Path:
+    return resolve_path(cfg["pumpportal"].get("shared_dir", "data/raw/pumpportal")) / f"{date_key()}.jsonl"
 
 
 def dex_path(root: Path) -> Path:
@@ -220,10 +224,7 @@ async def download_telegram_lite_data(invite_link: str) -> dict[str, Any]:
         "time": utc_now_iso_ms_z(),
         "source": "telethon",
         "mode": "lite",
-        "input": {
-            "invite_link": invite_link,
-            "channel_name": channel_name,
-        },
+        "input": {"invite_link": invite_link, "channel_name": channel_name},
         "metrics": metrics,
     }
 
@@ -276,11 +277,7 @@ async def save_enrichment_row(root: Path, name: str, mint: str, trigger_reason: 
 
 
 def error_result(exc: Exception) -> dict[str, Any]:
-    return {
-        "ok": False,
-        "error_type": type(exc).__name__,
-        "error_message": str(exc),
-    }
+    return {"ok": False, "error_type": type(exc).__name__, "error_message": str(exc)}
 
 
 async def collect_enrichment(
@@ -381,20 +378,56 @@ async def run_enrichments(
         )
 
 
-async def pumpportal_loop(state: PreMigrationState, root: Path, url: str | None) -> None:
+def process_pumpportal_event(state: PreMigrationState, event: dict[str, Any]) -> None:
+    if not state.record_event(event):
+        return
+
+    mint = event.get("mint")
+    if not mint:
+        return
+
+    if event.get("type") == "migration":
+        state.mark_migrated(mint)
+    else:
+        state.upsert_mint(mint)
+
+
+async def pumpportal_direct_loop(state: PreMigrationState, root: Path, url: str | None) -> None:
     async for event in listen(mints=True, migrations=True, url=url):
         append_jsonl(raw_event_path(root), {"row_type": "pumpportal_event", **event})
-        if not state.record_event(event):
+        process_pumpportal_event(state, event)
+
+
+async def pumpportal_file_loop(cfg: dict[str, Any], state: PreMigrationState) -> None:
+    path = shared_pumpportal_path(cfg)
+    poll_seconds = float(cfg["pumpportal"].get("poll_seconds", 1))
+    cursor_name = "shared_pumpportal"
+
+    while True:
+        if not path.exists():
+            await asyncio.sleep(poll_seconds)
             continue
 
-        mint = event.get("mint")
-        if not mint:
-            continue
+        offset = state.get_cursor(cursor_name, path)
+        with path.open("r", encoding="utf-8") as f:
+            f.seek(offset)
+            while line := f.readline():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                process_pumpportal_event(state, event)
+            state.set_cursor(cursor_name, path, f.tell())
 
-        if event.get("type") == "migration":
-            state.mark_migrated(mint)
-        else:
-            state.upsert_mint(mint)
+        await asyncio.sleep(poll_seconds)
+
+
+async def pumpportal_loop(cfg: dict[str, Any], state: PreMigrationState, root: Path) -> None:
+    pump_cfg = cfg.get("pumpportal") or {}
+    if pump_cfg.get("mode", "direct") == "file":
+        await pumpportal_file_loop(cfg, state)
+    else:
+        await pumpportal_direct_loop(state, root, pump_cfg.get("url"))
 
 
 async def dashboard_loop(cfg: dict[str, Any], state: PreMigrationState) -> None:
@@ -418,15 +451,44 @@ async def dashboard_loop(cfg: dict[str, Any], state: PreMigrationState) -> None:
         await asyncio.sleep(interval)
 
 
+def post_row(batch_row: dict[str, Any], mint: str, pairs: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "timestamp": batch_row["timestamp"],
+        "local_received_at_ms": batch_row["local_received_at_ms"],
+        "source": "dexscreener",
+        "method": "tokens-v1",
+        "mint": mint,
+        "http_status": batch_row["http_status"],
+        "elapsed_ms": batch_row["elapsed_ms"],
+        "rate_limit": batch_row["rate_limit"],
+        "error_type": batch_row["error_type"],
+        "error_message": batch_row["error_message"],
+        "data": pairs,
+    }
+
+
 async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: Path) -> None:
-    request_delay = 60 / int(cfg["dexscreener"]["max_requests_per_minute"])
+    dex_cfg = cfg["dexscreener"]
+    batch_size = int(dex_cfg.get("batch_size", 30))
+    request_delay = 60 / int(dex_cfg["max_requests_per_minute"])
+    coalesce_s = float(dex_cfg.get("coalesce_ms", 0)) / 1000
     limiters = {
         name: RateLimiter(int(cfg["enrichment_limits"][f"{name}_per_minute"]))
         for name in ["security", "twitter_lite", "telegram_lite", "website"]
     }
 
     while True:
-        mints = state.due_mints(BATCH_SIZE)
+        targets = state.due_dex_targets(batch_size)
+        post_mints = list(dict.fromkeys(target["mint"] for target in targets))
+        pre_mints = state.due_mints(batch_size - len(post_mints), exclude=set(post_mints))
+
+        if coalesce_s and len(post_mints) + len(pre_mints) < batch_size:
+            await asyncio.sleep(coalesce_s)
+            targets = state.due_dex_targets(batch_size)
+            post_mints = list(dict.fromkeys(target["mint"] for target in targets))
+            pre_mints = state.due_mints(batch_size - len(post_mints), exclude=set(post_mints))
+
+        mints = post_mints + pre_mints
         if not mints:
             await asyncio.sleep(int(cfg["polling"]["idle_sleep_seconds"]))
             continue
@@ -448,8 +510,20 @@ async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: 
         }
         append_jsonl(dex_path(root), batch_row)
 
+        target_by_mint: dict[str, list[dict[str, Any]]] = {}
+        for target in targets:
+            target_by_mint.setdefault(target["mint"], []).append(target)
+
         for mint in mints:
             pairs = pairs_for_mint(response.data, mint)
+
+            for target in target_by_mint.get(mint, []):
+                append_jsonl(Path(target["output_path"]), post_row(batch_row, mint, pairs))
+                state.mark_dex_target_polled(mint, target["target_type"])
+
+            if mint not in pre_mints:
+                continue
+
             pair = best_pair(pairs)
             market_cap = max_market_cap_usd(pairs)
             score = priority_score(pairs, market_cap, cfg["selection"])
@@ -515,7 +589,7 @@ async def main(config_path: Path) -> None:
     state = PreMigrationState(root / "state.sqlite3")
 
     await asyncio.gather(
-        pumpportal_loop(state, root, cfg.get("pumpportal", {}).get("url")),
+        pumpportal_loop(cfg, state, root),
         dexscreener_loop(cfg, state, root),
         dashboard_loop(cfg, state),
     )
