@@ -22,6 +22,7 @@ from crypto_trade.ingest import website_grader
 from crypto_trade.ingest.bronze import EventSink
 from crypto_trade.pipeline.config import PipelineConfig
 from crypto_trade.pipeline.mint import looks_like_solana_address
+from crypto_trade.pipeline.premigration_state import PreMigrationState
 from crypto_trade.pipeline.state import StateStore
 
 ORCHESTRATOR_CONFIG_PATH = CONFIG_DIR / "orchestrator.yaml"
@@ -54,6 +55,10 @@ def onchain_dir(cfg: PipelineConfig, mint: str) -> Path:
 
 def orchestrator_log_path(cfg: PipelineConfig) -> Path:
     return cfg.data_root / "raw" / "orchestrator" / f"{utc_now_iso_ms_z()[:10]}.jsonl"
+
+
+def premigration_state_path(cfg: PipelineConfig) -> Path:
+    return cfg.data_root / "raw" / "premigration" / "state.sqlite3"
 
 
 def optional_int(value: Any) -> int | None:
@@ -241,6 +246,39 @@ async def cancel_task(task: asyncio.Task[Any] | None) -> None:
         await asyncio.gather(task, return_exceptions=True)
 
 
+def register_shared_dexscreener_target(
+    *,
+    cfg: PipelineConfig,
+    mint: str,
+    save_dir: Path,
+    dexscreener_cfg: dict[str, Any],
+    start_ms: int,
+) -> None:
+    if not dexscreener_cfg.get("enabled") or not dexscreener_cfg.get("use_shared_queue"):
+        return
+
+    state = PreMigrationState(premigration_state_path(cfg))
+    try:
+        state.register_dex_target(
+            mint=mint,
+            target_type="post_migration",
+            output_path=str(save_dir / "dexscreener_24h.jsonl"),
+            interval_ms=int(dexscreener_cfg["post_migration_interval_seconds"]) * 1000,
+            expires_ms=start_ms + int(dexscreener_cfg["length"]) * 1000,
+            priority=100,
+        )
+    finally:
+        state.close()
+
+
+def unregister_shared_dexscreener_target(cfg: PipelineConfig, mint: str) -> None:
+    state = PreMigrationState(premigration_state_path(cfg))
+    try:
+        state.remove_dex_target(mint, "post_migration")
+    finally:
+        state.close()
+
+
 def start_onchain_capture(
     *,
     cfg: PipelineConfig,
@@ -273,9 +311,7 @@ def start_onchain_capture(
                 "infer_vaults_limit": int(onchain_cfg["infer_vaults_limit"]),
                 "simulate_tx_base64": onchain_cfg.get("simulate_tx_base64"),
                 "performance_sample_limit": int(onchain_cfg["performance_sample_limit"]),
-                "max_signatures_per_address": optional_int(
-                    onchain_cfg.get("max_signatures_per_address")
-                ),
+                "max_signatures_per_address": optional_int(onchain_cfg.get("max_signatures_per_address")),
                 "max_transactions_total": optional_int(onchain_cfg.get("max_transactions_total")),
                 "save_dir": save_dir,
                 "window_start_ms": window_start_ms,
@@ -360,11 +396,7 @@ async def run_optional_analytics(
                 stage="website_grader",
                 fn=asyncio.to_thread,
                 args=(save_website_report,),
-                kwargs={
-                    "mint": mint,
-                    "meta": meta,
-                    "save_dir": save_dir,
-                },
+                kwargs={"mint": mint, "meta": meta, "save_dir": save_dir},
             )
         )
 
@@ -438,6 +470,14 @@ async def migrated_token_worker(
         pair_address = find_pair_address(migration_event)
         active_pair_address = None
 
+        register_shared_dexscreener_target(
+            cfg=cfg,
+            mint=mint,
+            save_dir=o_dir,
+            dexscreener_cfg=dexscreener_cfg,
+            start_ms=capture_start_ms,
+        )
+
         await log_event(
             cfg,
             sink,
@@ -448,6 +488,7 @@ async def migrated_token_worker(
                 "onchain_dir": str(o_dir),
                 "pair_address": pair_address,
                 "capture_start_ms": capture_start_ms,
+                "shared_dexscreener": bool(dexscreener_cfg.get("use_shared_queue")),
             },
         )
 
@@ -532,10 +573,7 @@ async def migrated_token_worker(
                     stage="security_report",
                     fn=security_api.main,
                     required=True,
-                    kwargs={
-                        "mint": mint,
-                        "save_dir": a_dir,
-                    },
+                    kwargs={"mint": mint, "save_dir": a_dir},
                 )
 
                 red_flags_result = await run_stage(
@@ -556,6 +594,7 @@ async def migrated_token_worker(
 
                 if red_flags_result["failed"]:
                     state.mark_status(mint, "dropped_red_flags")
+                    unregister_shared_dexscreener_target(cfg, mint)
 
                     await log_event(
                         cfg,
@@ -601,7 +640,7 @@ async def migrated_token_worker(
             state.mark_status(mint, "waiting_onchain_capture")
             await active_capture_task
 
-            if dexscreener_cfg["enabled"]:
+            if dexscreener_cfg["enabled"] and not dexscreener_cfg.get("use_shared_queue"):
                 state.mark_status(mint, "dexscreener_24h")
 
                 await run_stage(
@@ -634,6 +673,7 @@ async def migrated_token_worker(
 
         except Exception as exc:
             state.mark_status(mint, "failed")
+            unregister_shared_dexscreener_target(cfg, mint)
             await cancel_task(active_capture_task)
             await cancel_task(holder_task)
 
