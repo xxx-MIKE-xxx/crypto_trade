@@ -6,6 +6,7 @@ import hashlib
 import math
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from crypto_trade.core.env import load_env
 from crypto_trade.core.io import append_jsonl
@@ -19,6 +20,10 @@ from crypto_trade.pipeline.premigration_state import PreMigrationState
 
 CONFIG_PATH = CONFIG_DIR / "premigration.yaml"
 BATCH_SIZE = 30
+TWITTER_RESERVED_PATHS = {
+    "i", "home", "explore", "search", "notifications", "messages", "settings",
+    "login", "signup", "intent", "share", "privacy", "tos",
+}
 
 
 def resolve_path(path: str | Path) -> Path:
@@ -113,13 +118,38 @@ def market_cap_sample_rate(market_cap: float, selection_cfg: dict[str, Any]) -> 
     if trigger <= 0 or interval <= 0:
         return 0.0, None
 
-    limit_rate = float(sample_cfg.get("limit_rate", 0.0))
+    bin_count = max(1, math.ceil(trigger / interval))
+    bin_index = max(0, min(int(market_cap // interval), bin_count - 1))
     lower_fraction = float(sample_cfg.get("lower_interval_fraction", 0.7))
-    bin_index = max(0, min(int(market_cap // interval), int(trigger // interval) - 1))
-    top_bin = max(0, int(trigger // interval) - 1)
-    distance_from_top = top_bin - bin_index
+    weights = [lower_fraction ** (bin_count - 1 - i) for i in range(bin_count)]
+    total_weight = sum(weights)
+    rate = float(sample_cfg.get("limit_rate", 0.0)) * weights[bin_index] / total_weight
+    return rate, bin_index
 
-    return limit_rate * (lower_fraction ** distance_from_top), bin_index
+
+def normalize_social_url(url: str | None, kind: str) -> str | None:
+    if not url:
+        return None
+
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    host = parsed.netloc.lower().removeprefix("www.")
+    path = parsed.path.strip("/")
+
+    if kind == "twitter":
+        if host not in {"x.com", "twitter.com"}:
+            return None
+        username = path.split("/", 1)[0].lstrip("@")
+        if not username or username.lower() in TWITTER_RESERVED_PATHS:
+            return None
+        return f"https://x.com/{username}"
+
+    if kind == "telegram":
+        if host not in {"t.me", "telegram.me"}:
+            return None
+        group = path.split("/", 1)[0]
+        return f"https://t.me/{group}" if group else None
+
+    return url
 
 
 def social_url(pair: dict[str, Any], name: str) -> str | None:
@@ -129,7 +159,7 @@ def social_url(pair: dict[str, Any], name: str) -> str | None:
         platform = str(social.get("type") or social.get("platform") or "").lower()
         url = social.get("url")
         if url and (platform == name or (name == "twitter" and platform == "x")):
-            return str(url)
+            return normalize_social_url(str(url), name)
     return None
 
 
@@ -189,6 +219,37 @@ async def save_enrichment_row(root: Path, name: str, mint: str, trigger_reason: 
     )
 
 
+def error_result(exc: Exception) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+    }
+
+
+async def collect_enrichment(
+    *,
+    state: PreMigrationState,
+    root: Path,
+    mint: str,
+    name: str,
+    trigger_reason: str,
+    limiter: RateLimiter,
+    coro_factory: Any,
+) -> None:
+    if not state.enrichment_due(mint, name):
+        return
+
+    await limiter.wait()
+    try:
+        result = await coro_factory()
+    except Exception as exc:
+        result = error_result(exc)
+
+    await save_enrichment_row(root, name, mint, trigger_reason, result)
+    state.mark_enrichment_done(mint, name)
+
+
 async def run_enrichments(
     *,
     cfg: dict[str, Any],
@@ -209,18 +270,26 @@ async def run_enrichments(
     tg_link = social_url(pair, "telegram")
     enrich_cfg = cfg["enrichment"]
 
-    if enrich_cfg["security"].get("enabled") and state.enrichment_due(mint, "security"):
-        await limiters["security"].wait()
-        try:
-            result = await security_api.main(mint=mint, save_dir=None)
-            await save_enrichment_row(root, "security", mint, reason, result)
-        finally:
-            state.mark_enrichment_done(mint, "security")
+    if enrich_cfg["security"].get("enabled"):
+        await collect_enrichment(
+            state=state,
+            root=root,
+            mint=mint,
+            name="security",
+            trigger_reason=reason,
+            limiter=limiters["security"],
+            coro_factory=lambda: security_api.collect_security_report(mint),
+        )
 
-    if site and enrich_cfg["website"].get("enabled") and state.enrichment_due(mint, "website"):
-        await limiters["website"].wait()
-        try:
-            result = await asyncio.to_thread(
+    if site and enrich_cfg["website"].get("enabled"):
+        await collect_enrichment(
+            state=state,
+            root=root,
+            mint=mint,
+            name="website",
+            trigger_reason=reason,
+            limiter=limiters["website"],
+            coro_factory=lambda: asyncio.to_thread(
                 website_grader.run_report,
                 coin_name=meta["name"],
                 coin_symbol=meta["symbol"],
@@ -228,26 +297,30 @@ async def run_enrichments(
                 website_url=site,
                 x_account=x_link,
                 telegram_link=tg_link,
-            )
-            await save_enrichment_row(root, "website", mint, reason, result)
-        finally:
-            state.mark_enrichment_done(mint, "website")
+            ),
+        )
 
-    if x_link and enrich_cfg["twitter_lite"].get("enabled") and state.enrichment_due(mint, "twitter_lite"):
-        await limiters["twitter_lite"].wait()
-        try:
-            result = await twitter.main(link=x_link, save_dir=root / "tmp", lite=True)
-            await save_enrichment_row(root, "twitter_lite", mint, reason, result)
-        finally:
-            state.mark_enrichment_done(mint, "twitter_lite")
+    if x_link and enrich_cfg["twitter_lite"].get("enabled"):
+        await collect_enrichment(
+            state=state,
+            root=root,
+            mint=mint,
+            name="twitter_lite",
+            trigger_reason=reason,
+            limiter=limiters["twitter_lite"],
+            coro_factory=lambda: twitter.download_twitter_lite_data(x_link),
+        )
 
-    if tg_link and enrich_cfg["telegram_lite"].get("enabled") and state.enrichment_due(mint, "telegram_lite"):
-        await limiters["telegram_lite"].wait()
-        try:
-            result = await telegram_info.main(mint=mint, invite_link=tg_link, save_dir=root / "tmp", lite=True)
-            await save_enrichment_row(root, "telegram_lite", mint, reason, result)
-        finally:
-            state.mark_enrichment_done(mint, "telegram_lite")
+    if tg_link and enrich_cfg["telegram_lite"].get("enabled"):
+        await collect_enrichment(
+            state=state,
+            root=root,
+            mint=mint,
+            name="telegram_lite",
+            trigger_reason=reason,
+            limiter=limiters["telegram_lite"],
+            coro_factory=lambda: telegram_info.main(mint=mint, invite_link=tg_link, save_dir=root / "tmp", lite=True),
+        )
 
 
 async def pumpportal_loop(state: PreMigrationState, root: Path, url: str | None) -> None:
