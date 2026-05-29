@@ -36,8 +36,10 @@ class PreMigrationState:
                 next_dex_poll_ms INTEGER NOT NULL,
                 dex_polls INTEGER NOT NULL DEFAULT 0,
                 empty_polls INTEGER NOT NULL DEFAULT 0,
+                inactive_polls INTEGER NOT NULL DEFAULT 0,
                 priority_score REAL NOT NULL DEFAULT 0,
                 dead_reason TEXT,
+                dead_ts TEXT,
                 security_report_ts TEXT,
                 twitter_lite_ts TEXT,
                 telegram_lite_ts TEXT,
@@ -59,6 +61,8 @@ class PreMigrationState:
             """
         )
 
+        self._ensure_column("mints", "inactive_polls", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("mints", "dead_ts", "TEXT")
         for column in ENRICHMENT_COLUMNS.values():
             self._ensure_column("mints", column, "TEXT")
 
@@ -156,35 +160,48 @@ class PreMigrationState:
         mint: str,
         *,
         has_pairs: bool,
+        inactive: bool,
         score: float,
         next_poll_ms: int,
         no_pair_dead_ms: int,
+        inactive_dead_ms: int,
+        inactive_confirmations: int,
         max_track_ms: int,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         row = self.conn.execute(
-            "SELECT first_seen_ms, migrated_ts, empty_polls FROM mints WHERE mint = ?",
+            "SELECT first_seen_ms, migrated_ts, empty_polls, inactive_polls FROM mints WHERE mint = ?",
             (mint,),
         ).fetchone()
         if not row:
-            return
+            return None
 
         age_ms = now_ms() - int(row[0])
         migrated = row[1] is not None
         empty_polls = 0 if has_pairs else int(row[2]) + 1
+        inactive_polls = int(row[3]) + 1 if inactive else 0
         status = "migrated" if migrated else "active"
         dead_reason = None
+        dead_ts = None
 
         if age_ms >= max_track_ms:
             status, next_poll_ms, dead_reason = "expired", 0, "max_track_hours"
-        elif not has_pairs and not migrated and age_ms >= no_pair_dead_ms:
-            status, next_poll_ms, dead_reason = "dead", 0, "no_pair_after_threshold"
+        elif not migrated and age_ms >= no_pair_dead_ms and not has_pairs:
+            status, next_poll_ms, dead_reason, dead_ts = "dead", 0, "no_pair_after_threshold", utc_now_iso_ms_z()
+        elif (
+            not migrated
+            and has_pairs
+            and age_ms >= inactive_dead_ms
+            and inactive_polls >= inactive_confirmations
+        ):
+            status, next_poll_ms, dead_reason, dead_ts = "dead", 0, "inactive_after_threshold", utc_now_iso_ms_z()
 
         self.conn.execute(
             """
             UPDATE mints
             SET status = ?, last_dex_poll_ms = ?, next_dex_poll_ms = ?,
-                dex_polls = dex_polls + 1, empty_polls = ?, priority_score = ?,
-                dead_reason = COALESCE(?, dead_reason), updated_ts = ?
+                dex_polls = dex_polls + 1, empty_polls = ?, inactive_polls = ?,
+                priority_score = ?, dead_reason = COALESCE(?, dead_reason),
+                dead_ts = COALESCE(?, dead_ts), updated_ts = ?
             WHERE mint = ?
             """,
             (
@@ -192,12 +209,15 @@ class PreMigrationState:
                 now_ms(),
                 next_poll_ms,
                 empty_polls,
+                inactive_polls,
                 score,
                 dead_reason,
+                dead_ts,
                 utc_now_iso_ms_z(),
                 mint,
             ),
         )
+        return {"status": status, "dead_reason": dead_reason, "inactive_polls": inactive_polls}
 
     def close(self) -> None:
         self.conn.close()
