@@ -58,8 +58,31 @@ class PreMigrationState:
                 ingest_ts TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS cursors (
+                name TEXT PRIMARY KEY,
+                path TEXT NOT NULL,
+                offset INTEGER NOT NULL DEFAULT 0,
+                updated_ts TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS dex_targets (
+                mint TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                output_path TEXT NOT NULL,
+                next_poll_ms INTEGER NOT NULL,
+                interval_ms INTEGER NOT NULL,
+                expires_ms INTEGER NOT NULL,
+                priority INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                updated_ts TEXT NOT NULL,
+                PRIMARY KEY (mint, target_type)
+            );
+
             CREATE INDEX IF NOT EXISTS ix_mints_due
             ON mints(status, next_dex_poll_ms, priority_score);
+
+            CREATE INDEX IF NOT EXISTS ix_dex_targets_due
+            ON dex_targets(status, next_poll_ms, priority);
             """
         )
 
@@ -78,6 +101,27 @@ class PreMigrationState:
         columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
         if column not in columns:
             self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def get_cursor(self, name: str, path: Path) -> int:
+        path_text = str(path)
+        row = self.conn.execute(
+            "SELECT path, offset FROM cursors WHERE name = ?",
+            (name,),
+        ).fetchone()
+        return int(row[1]) if row and row[0] == path_text else 0
+
+    def set_cursor(self, name: str, path: Path, offset: int) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO cursors(name, path, offset, updated_ts)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                path = excluded.path,
+                offset = excluded.offset,
+                updated_ts = excluded.updated_ts
+            """,
+            (name, str(path), int(offset), utc_now_iso_ms_z()),
+        )
 
     def record_event(self, event: dict[str, Any]) -> bool:
         event_hash = short_hash(compact_json_dumps(event))
@@ -128,7 +172,11 @@ class PreMigrationState:
             (utc_now_iso_ms_z(), now_ms(), utc_now_iso_ms_z(), mint),
         )
 
-    def due_mints(self, limit: int) -> list[str]:
+    def due_mints(self, limit: int, exclude: set[str] | None = None) -> list[str]:
+        if limit <= 0:
+            return []
+
+        exclude = exclude or set()
         rows = self.conn.execute(
             """
             SELECT mint FROM mints
@@ -137,9 +185,89 @@ class PreMigrationState:
             ORDER BY last_dex_poll_ms IS NOT NULL, next_dex_poll_ms, priority_score DESC
             LIMIT ?
             """,
-            (now_ms(), limit),
+            (now_ms(), limit + len(exclude)),
         ).fetchall()
-        return [row[0] for row in rows]
+        return [row[0] for row in rows if row[0] not in exclude][:limit]
+
+    def register_dex_target(
+        self,
+        *,
+        mint: str,
+        target_type: str,
+        output_path: str,
+        interval_ms: int,
+        expires_ms: int,
+        priority: int,
+    ) -> None:
+        ts = utc_now_iso_ms_z()
+        ms = now_ms()
+        self.conn.execute(
+            """
+            INSERT INTO dex_targets(
+                mint, target_type, output_path, next_poll_ms, interval_ms,
+                expires_ms, priority, status, updated_ts
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            ON CONFLICT(mint, target_type) DO UPDATE SET
+                output_path = excluded.output_path,
+                next_poll_ms = MIN(dex_targets.next_poll_ms, excluded.next_poll_ms),
+                interval_ms = excluded.interval_ms,
+                expires_ms = excluded.expires_ms,
+                priority = excluded.priority,
+                status = 'active',
+                updated_ts = excluded.updated_ts
+            """,
+            (mint, target_type, output_path, ms, interval_ms, expires_ms, priority, ts),
+        )
+
+    def due_dex_targets(self, limit: int) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+
+        ms = now_ms()
+        self.conn.execute(
+            "UPDATE dex_targets SET status = 'expired', updated_ts = ? WHERE status = 'active' AND expires_ms <= ?",
+            (utc_now_iso_ms_z(), ms),
+        )
+        rows = self.conn.execute(
+            """
+            SELECT mint, target_type, output_path, interval_ms, expires_ms, priority
+            FROM dex_targets
+            WHERE status = 'active'
+              AND next_poll_ms <= ?
+              AND expires_ms > ?
+            ORDER BY priority DESC, next_poll_ms, updated_ts
+            LIMIT ?
+            """,
+            (ms, ms, limit),
+        ).fetchall()
+        return [
+            {
+                "mint": row[0],
+                "target_type": row[1],
+                "output_path": row[2],
+                "interval_ms": int(row[3]),
+                "expires_ms": int(row[4]),
+                "priority": int(row[5]),
+            }
+            for row in rows
+        ]
+
+    def mark_dex_target_polled(self, mint: str, target_type: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE dex_targets
+            SET next_poll_ms = ? + interval_ms, updated_ts = ?
+            WHERE mint = ? AND target_type = ? AND status = 'active'
+            """,
+            (now_ms(), utc_now_iso_ms_z(), mint, target_type),
+        )
+
+    def remove_dex_target(self, mint: str, target_type: str) -> None:
+        self.conn.execute(
+            "DELETE FROM dex_targets WHERE mint = ? AND target_type = ?",
+            (mint, target_type),
+        )
 
     def mint_age_ms(self, mint: str) -> int:
         row = self.conn.execute(
