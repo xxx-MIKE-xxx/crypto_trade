@@ -17,6 +17,10 @@ polling:
   idle_sleep_seconds: 2
   max_track_hours: 24
 
+dashboard:
+  enabled: true
+  interval_seconds: 30
+
 dead_detection:
   no_pair_after_minutes: 60
   inactive_after_minutes: 45
