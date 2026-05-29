@@ -2,12 +2,18 @@ storage:
   root: data/raw/premigration
 
 pumpportal:
+  mode: file
+  shared_dir: data/raw/pumpportal
+  poll_seconds: 1
   url: null
 
 dexscreener:
   enabled: true
-  max_requests_per_minute: 240
+  max_requests_per_minute: 300
   batch_size: 30
+  coalesce_ms: 500
+  post_migration_interval_seconds: 30
+  post_migration_length_seconds: 1800
 
 polling:
   fresh_empty_seconds: 10
