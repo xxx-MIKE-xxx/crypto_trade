@@ -33,7 +33,8 @@ analytics:
 
 dexscreener:
   enabled: true
-  interval: 60
+  use_shared_queue: true
+  post_migration_interval_seconds: 30
   length: 1800
 
 drop:
