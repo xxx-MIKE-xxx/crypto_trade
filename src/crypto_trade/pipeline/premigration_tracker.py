@@ -2,23 +2,27 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import math
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 from crypto_trade.core.env import load_env
 from crypto_trade.core.io import append_jsonl, chunked
 from crypto_trade.core.logging_config import configure_logging
-from crypto_trade.core.paths import RAW_DIR
-from crypto_trade.core.text import compact_json_dumps, short_hash
+from crypto_trade.core.paths import CONFIG_DIR, PROJECT_ROOT, RAW_DIR
 from crypto_trade.core.time import now_ms, now_ts, utc_now_iso_ms_z
-from crypto_trade.ingest import dexscreener
+from crypto_trade.core.yaml import load_yaml
+from crypto_trade.ingest import dexscreener, security_api
 from crypto_trade.ingest.pumpportal import listen
+from crypto_trade.pipeline.premigration_state import PreMigrationState
 
-ROOT = RAW_DIR / "premigration"
-WSOL_MINT = "So11111111111111111111111111111111111111112"
+CONFIG_PATH = CONFIG_DIR / "premigration.yaml"
+BATCH_SIZE = 30
+
+
+def resolve_path(path: str | Path) -> Path:
+    path = Path(path)
+    return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 def date_key() -> str:
@@ -33,8 +37,8 @@ def dex_path(root: Path) -> Path:
     return root / "dexscreener" / f"{date_key()}.jsonl"
 
 
-def mint_dex_path(root: Path, mint: str) -> Path:
-    return root / "dexscreener_by_mint" / mint / f"{date_key()}.jsonl"
+def security_dir(root: Path, mint: str) -> Path:
+    return root / "security" / mint
 
 
 def pair_mints(pair: dict[str, Any]) -> set[str]:
@@ -74,145 +78,48 @@ def next_interval_ms(score: float, min_s: int, max_s: int) -> int:
     return int((max_s - (max_s - min_s) * score) * 1000)
 
 
-class PreMigrationState:
-    def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(path, isolation_level=None)
-        self.conn.execute("PRAGMA journal_mode=WAL;")
-        self.conn.execute("PRAGMA synchronous=NORMAL;")
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS mints (
-                mint TEXT PRIMARY KEY,
-                first_seen_ts TEXT NOT NULL,
-                first_seen_ms INTEGER NOT NULL,
-                migrated_ts TEXT,
-                status TEXT NOT NULL,
-                last_dex_poll_ms INTEGER,
-                next_dex_poll_ms INTEGER NOT NULL,
-                dex_polls INTEGER NOT NULL DEFAULT 0,
-                empty_polls INTEGER NOT NULL DEFAULT 0,
-                priority_score REAL NOT NULL DEFAULT 0,
-                dead_reason TEXT,
-                updated_ts TEXT NOT NULL
-            );
+def max_market_cap_usd(pairs: list[dict[str, Any]]) -> float:
+    values = [p.get("marketCap") or p.get("fdv") or 0 for p in pairs]
+    return max((float(v or 0) for v in values), default=0.0)
 
-            CREATE TABLE IF NOT EXISTS events (
-                event_hash TEXT PRIMARY KEY,
-                event_type TEXT NOT NULL,
-                mint TEXT,
-                event_ts TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                ingest_ts TEXT NOT NULL
-            );
 
-            CREATE INDEX IF NOT EXISTS ix_mints_due ON mints(status, next_dex_poll_ms, priority_score);
-            """
-        )
+def next_poll_ms(
+    *,
+    has_pairs: bool,
+    age_ms: int,
+    score: float,
+    polling_cfg: dict[str, Any],
+) -> int:
+    fresh_ms = int(polling_cfg["fresh_empty_minutes"]) * 60_000
+    if not has_pairs and age_ms < fresh_ms:
+        return now_ms() + int(polling_cfg["fresh_empty_seconds"]) * 1000
 
-    def record_event(self, event: dict[str, Any]) -> bool:
-        event_hash = short_hash(compact_json_dumps(event))
-        try:
-            self.conn.execute(
-                """
-                INSERT INTO events(event_hash, event_type, mint, event_ts, payload_json, ingest_ts)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_hash,
-                    event.get("type"),
-                    event.get("mint"),
-                    event.get("time") or utc_now_iso_ms_z(),
-                    compact_json_dumps(event),
-                    utc_now_iso_ms_z(),
-                ),
-            )
-            return True
-        except sqlite3.IntegrityError:
-            return False
+    return now_ms() + next_interval_ms(
+        score,
+        int(polling_cfg["min_seconds"]),
+        int(polling_cfg["max_seconds"]),
+    )
 
-    def upsert_mint(self, mint: str) -> None:
-        ts = utc_now_iso_ms_z()
-        ms = now_ms()
-        self.conn.execute(
-            """
-            INSERT INTO mints(mint, first_seen_ts, first_seen_ms, status, next_dex_poll_ms, updated_ts)
-            VALUES (?, ?, ?, 'active', ?, ?)
-            ON CONFLICT(mint) DO UPDATE SET
-                next_dex_poll_ms = MIN(mints.next_dex_poll_ms, excluded.next_dex_poll_ms),
-                updated_ts = excluded.updated_ts
-            """,
-            (mint, ts, ms, ms, ts),
-        )
 
-    def mark_migrated(self, mint: str) -> None:
-        self.upsert_mint(mint)
-        self.conn.execute(
-            """
-            UPDATE mints
-            SET migrated_ts = COALESCE(migrated_ts, ?),
-                status = 'migrated',
-                next_dex_poll_ms = ?,
-                updated_ts = ?
-            WHERE mint = ?
-            """,
-            (utc_now_iso_ms_z(), now_ms(), utc_now_iso_ms_z(), mint),
-        )
+async def maybe_collect_security(
+    *,
+    state: PreMigrationState,
+    root: Path,
+    mint: str,
+    pairs: list[dict[str, Any]],
+    security_cfg: dict[str, Any],
+) -> None:
+    if not security_cfg.get("enabled") or not state.security_due(mint):
+        return
 
-    def due_mints(self, limit: int) -> list[str]:
-        rows = self.conn.execute(
-            """
-            SELECT mint FROM mints
-            WHERE status NOT IN ('dead', 'expired')
-              AND next_dex_poll_ms <= ?
-            ORDER BY last_dex_poll_ms IS NOT NULL, next_dex_poll_ms, priority_score DESC
-            LIMIT ?
-            """,
-            (now_ms(), limit),
-        ).fetchall()
-        return [row[0] for row in rows]
+    trigger = float(security_cfg["migration_market_cap_usd"]) * float(security_cfg["trigger_fraction"])
+    if max_market_cap_usd(pairs) < trigger:
+        return
 
-    def save_snapshot(
-        self,
-        mint: str,
-        pairs: list[dict[str, Any]],
-        *,
-        min_poll_s: int,
-        max_poll_s: int,
-        no_pair_dead_ms: int,
-        max_track_ms: int,
-    ) -> None:
-        row = self.conn.execute(
-            "SELECT first_seen_ms, migrated_ts, empty_polls FROM mints WHERE mint = ?",
-            (mint,),
-        ).fetchone()
-        if not row:
-            return
-
-        current_ms = now_ms()
-        age_ms = current_ms - int(row[0])
-        migrated = row[1] is not None
-        empty_polls = 0 if pairs else int(row[2]) + 1
-        score = pair_score(pairs)
-        status = "migrated" if migrated else "active"
-        dead_reason = None
-        next_poll_ms = current_ms + next_interval_ms(score, min_poll_s, max_poll_s)
-
-        if age_ms >= max_track_ms:
-            status, next_poll_ms, dead_reason = "expired", 0, "max_track_hours"
-        elif not pairs and not migrated and age_ms >= no_pair_dead_ms:
-            status, next_poll_ms, dead_reason = "dead", 0, "no_pair_after_threshold"
-
-        self.conn.execute(
-            """
-            UPDATE mints
-            SET status = ?, last_dex_poll_ms = ?, next_dex_poll_ms = ?,
-                dex_polls = dex_polls + 1, empty_polls = ?, priority_score = ?,
-                dead_reason = COALESCE(?, dead_reason), updated_ts = ?
-            WHERE mint = ?
-            """,
-            (status, current_ms, next_poll_ms, empty_polls, score, dead_reason, utc_now_iso_ms_z(), mint),
-        )
+    try:
+        await security_api.main(mint=mint, save_dir=security_dir(root, mint))
+    finally:
+        state.mark_security_reported(mint)
 
 
 async def pumpportal_loop(state: PreMigrationState, root: Path, url: str | None) -> None:
@@ -224,20 +131,24 @@ async def pumpportal_loop(state: PreMigrationState, root: Path, url: str | None)
         mint = event.get("mint")
         if not mint:
             continue
+
         if event.get("type") == "migration":
             state.mark_migrated(mint)
         else:
             state.upsert_mint(mint)
 
 
-async def dexscreener_loop(args: argparse.Namespace, state: PreMigrationState) -> None:
-    batch_size = min(args.batch_size, 30)
-    request_delay = 60 / args.requests_per_minute
+async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: Path) -> None:
+    dex_cfg = cfg["dexscreener"]
+    polling_cfg = cfg["polling"]
+    dead_cfg = cfg["dead_detection"]
+    security_cfg = cfg["security"]
+    request_delay = 60 / int(dex_cfg["max_requests_per_minute"])
 
     while True:
-        mints = state.due_mints(batch_size)
+        mints = state.due_mints(BATCH_SIZE)
         if not mints:
-            await asyncio.sleep(args.idle_sleep)
+            await asyncio.sleep(int(polling_cfg["idle_sleep_seconds"]))
             continue
 
         response = await dexscreener.transactions_multiple_tokens(*mints)
@@ -254,43 +165,60 @@ async def dexscreener_loop(args: argparse.Namespace, state: PreMigrationState) -
             "error_message": response.error_message,
             "data": response.data,
         }
-        append_jsonl(dex_path(args.root), row)
+        append_jsonl(dex_path(root), row)
 
         for mint in mints:
             pairs = pairs_for_mint(response.data, mint)
-            append_jsonl(mint_dex_path(args.root, mint), {**row, "mint": mint, "data": pairs})
-            state.save_snapshot(
+            score = pair_score(pairs)
+            state.update_after_dex_poll(
                 mint,
-                pairs,
-                min_poll_s=args.min_poll_s,
-                max_poll_s=args.max_poll_s,
-                no_pair_dead_ms=args.no_pair_dead_minutes * 60_000,
-                max_track_ms=args.max_track_hours * 60 * 60_000,
+                has_pairs=bool(pairs),
+                score=score,
+                next_poll_ms=next_poll_ms(
+                    has_pairs=bool(pairs),
+                    age_ms=state.mint_age_ms(mint),
+                    score=score,
+                    polling_cfg=polling_cfg,
+                ),
+                no_pair_dead_ms=int(dead_cfg["no_pair_after_minutes"]) * 60_000,
+                max_track_ms=int(polling_cfg["max_track_hours"]) * 60 * 60_000,
+            )
+            append_jsonl(
+                dex_path(root),
+                {
+                    **row,
+                    "mint": mint,
+                    "data": pairs,
+                    "priority_score": score,
+                    "market_cap_usd": max_market_cap_usd(pairs),
+                },
+            )
+            await maybe_collect_security(
+                state=state,
+                root=root,
+                mint=mint,
+                pairs=pairs,
+                security_cfg=security_cfg,
             )
 
         await asyncio.sleep(request_delay)
 
 
-async def main(args: argparse.Namespace) -> None:
+async def main(config_path: Path) -> None:
     configure_logging()
     load_env()
 
-    state = PreMigrationState(args.root / "state.sqlite3")
+    cfg = load_yaml(config_path)
+    root = resolve_path(cfg.get("storage", {}).get("root", RAW_DIR / "premigration"))
+    state = PreMigrationState(root / "state.sqlite3")
+
     await asyncio.gather(
-        pumpportal_loop(state, args.root, args.pumpportal_url),
-        dexscreener_loop(args, state),
+        pumpportal_loop(state, root, cfg.get("pumpportal", {}).get("url")),
+        dexscreener_loop(cfg, state, root),
     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=ROOT)
-    parser.add_argument("--pumpportal-url", default=None)
-    parser.add_argument("--batch-size", type=int, default=30)
-    parser.add_argument("--requests-per-minute", type=int, default=240)
-    parser.add_argument("--idle-sleep", type=int, default=2)
-    parser.add_argument("--min-poll-s", type=int, default=10)
-    parser.add_argument("--max-poll-s", type=int, default=300)
-    parser.add_argument("--no-pair-dead-minutes", type=int, default=60)
-    parser.add_argument("--max-track-hours", type=int, default=24)
-    asyncio.run(main(parser.parse_args()))
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
+    asyncio.run(main(parser.parse_args().config))
