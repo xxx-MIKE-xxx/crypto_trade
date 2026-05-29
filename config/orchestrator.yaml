@@ -3,8 +3,8 @@ onchain:
   rpc_interval: 10
   infer_vaults_limit: 10
   performance_sample_limit: 60
-  max_signatures_per_address: 25
-  max_transactions_total: 50
+  max_signatures_per_address: null
+  max_transactions_total: null
   simulate_tx_base64: null
 
 security:
