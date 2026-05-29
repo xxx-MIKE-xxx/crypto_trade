@@ -17,9 +17,13 @@ from crypto_trade.pipeline.state import StateStore
 logger = logging.getLogger(__name__)
 
 
-def migrations_file(cfg: PipelineConfig) -> Path:
+def pumpportal_file(cfg: PipelineConfig) -> Path:
     now = utc_now()
-    return cfg.data_root / "raw" / "migrations" / f"{now:%Y-%m-%d}.jsonl"
+    return cfg.data_root / "raw" / "pumpportal" / f"{now:%Y-%m-%d}.jsonl"
+
+
+def migrations_file(cfg: PipelineConfig) -> Path:
+    return pumpportal_file(cfg)
 
 
 def orchestrator_file(cfg: PipelineConfig) -> Path:
@@ -118,10 +122,10 @@ async def pumpportal_loop(
     sink: EventSink,
     stop: asyncio.Event,
 ) -> None:
-    migration_path = migrations_file(cfg)
-    migration_path.parent.mkdir(parents=True, exist_ok=True)
+    event_path = pumpportal_file(cfg)
+    event_path.parent.mkdir(parents=True, exist_ok=True)
 
-    seen_mints = load_seen_mints_from_jsonl(migration_path)
+    seen_mints = load_seen_mints_from_jsonl(event_path)
     semaphore = asyncio.Semaphore(cfg.max_concurrent_tokens)
     worker_tasks: set[asyncio.Task[Any]] = set()
 
@@ -129,7 +133,7 @@ async def pumpportal_loop(
         cfg,
         "pumpportal_loop_started",
         {
-            "migrations_file": str(migration_path),
+            "pumpportal_file": str(event_path),
             "seen_mints_loaded": len(seen_mints),
             "max_concurrent_tokens": cfg.max_concurrent_tokens,
         },
@@ -140,7 +144,7 @@ async def pumpportal_loop(
         source="pipeline",
         event_type="pumpportal_loop_started",
         payload={
-            "migrations_file": str(migration_path),
+            "pumpportal_file": str(event_path),
             "seen_mints_loaded": len(seen_mints),
             "max_concurrent_tokens": cfg.max_concurrent_tokens,
         },
@@ -171,7 +175,7 @@ async def pumpportal_loop(
                 )
                 last_event_time = now
 
-            append_jsonl(migration_path, event)
+            append_jsonl(event_path, event)
 
             event_type = classify_pumpportal_event(event)
             mint = extract_mint(event)
@@ -231,7 +235,7 @@ async def pumpportal_loop(
                 continue
 
             mint_was_seen = mint in seen_mints or mint_exists_in_migration_file(
-                migration_path,
+                event_path,
                 mint,
             )
 
