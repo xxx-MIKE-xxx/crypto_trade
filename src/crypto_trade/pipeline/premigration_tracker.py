@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from crypto_trade.core.env import load_env
+from crypto_trade.core.env import get_env, load_env
 from crypto_trade.core.io import append_jsonl
 from crypto_trade.core.logging_config import configure_logging
 from crypto_trade.core.paths import CONFIG_DIR, PROJECT_ROOT, RAW_DIR
+from crypto_trade.core.telegram import TELEGRAM
 from crypto_trade.core.time import now_ms, now_ts, utc_now_iso_ms_z
 from crypto_trade.core.yaml import load_yaml
-from crypto_trade.ingest import dexscreener, security_api, telegram_info, twitter, website_grader
+from crypto_trade.ingest import dexscreener, security_api, twitter, website_grader
 from crypto_trade.ingest.pumpportal import listen
 from crypto_trade.pipeline.premigration_state import PreMigrationState
 
@@ -122,8 +123,7 @@ def market_cap_sample_rate(market_cap: float, selection_cfg: dict[str, Any]) -> 
     bin_index = max(0, min(int(market_cap // interval), bin_count - 1))
     lower_fraction = float(sample_cfg.get("lower_interval_fraction", 0.7))
     weights = [lower_fraction ** (bin_count - 1 - i) for i in range(bin_count)]
-    total_weight = sum(weights)
-    rate = float(sample_cfg.get("limit_rate", 0.0)) * weights[bin_index] / total_weight
+    rate = float(sample_cfg.get("limit_rate", 0.0)) * weights[bin_index] / sum(weights)
     return rate, bin_index
 
 
@@ -175,6 +175,33 @@ def token_meta(mint: str, pair: dict[str, Any]) -> dict[str, str]:
     return {
         "name": str(base.get("name") or mint),
         "symbol": str(base.get("symbol") or mint[:6]),
+    }
+
+
+def telegram_channel_name(link: str) -> str:
+    value = link.strip()
+    if value.startswith("@"):
+        return value[1:]
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    return parsed.path.strip("/").split("/", 1)[0]
+
+
+async def download_telegram_lite_data(invite_link: str) -> dict[str, Any]:
+    channel_name = telegram_channel_name(invite_link)
+    session_path = PROJECT_ROOT / "app_data" / "meme_metrics_session"
+
+    async with TELEGRAM(int(get_env("TG_API_ID")), get_env("TG_API_HASH"), session_path=session_path) as tg:
+        metrics = await tg.collect_lite_info(channel_name)
+
+    return {
+        "time": utc_now_iso_ms_z(),
+        "source": "telethon",
+        "mode": "lite",
+        "input": {
+            "invite_link": invite_link,
+            "channel_name": channel_name,
+        },
+        "metrics": metrics,
     }
 
 
@@ -319,7 +346,7 @@ async def run_enrichments(
             name="telegram_lite",
             trigger_reason=reason,
             limiter=limiters["telegram_lite"],
-            coro_factory=lambda: telegram_info.main(mint=mint, invite_link=tg_link, save_dir=root / "tmp", lite=True),
+            coro_factory=lambda: download_telegram_lite_data(tg_link),
         )
 
 
