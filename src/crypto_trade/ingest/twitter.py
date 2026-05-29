@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""X/Twitter profile data ingestion.
-
-Given an X/Twitter profile URL, downloads raw extracted profile/post fields
-through twscrape and stores them as JSON.
-
-Imported usage:
-    data = await main("https://x.com/purple_bitcoin_")
-    # writes data/raw/analytics/twitter.json
-
-Direct usage:
-    python -m crypto_trade.ingest.twitter https://x.com/purple_bitcoin_
-    # writes tmp/twitter.json
-"""
+"""X/Twitter profile data ingestion."""
 
 from __future__ import annotations
 
@@ -37,6 +25,7 @@ load_env()
 logger = logging.getLogger(__name__)
 
 OUTPUT_FILENAME = "twitter.json"
+LITE_OUTPUT_FILENAME = "twitter_lite.json"
 DEFAULT_ACCOUNTS_DB = PROJECT_ROOT / "app_data" / "accounts.db"
 DEFAULT_POST_LIMIT = 20
 
@@ -46,7 +35,6 @@ def json_default(obj: Any) -> str:
 
 
 def parse_account_link(link: str) -> str:
-    """Extract username from an X/Twitter profile URL or raw handle."""
     raw = link.strip()
 
     if not raw:
@@ -99,19 +87,14 @@ def get_post_limit(posts_limit: int | None = None) -> int:
 def to_dict(obj: Any) -> dict[str, Any]:
     if obj is None:
         return {}
-
     if isinstance(obj, dict):
         return obj
-
     if hasattr(obj, "dict"):
         return obj.dict()
-
     if hasattr(obj, "model_dump"):
         return obj.model_dump()
-
     if hasattr(obj, "__dict__"):
         return dict(obj.__dict__)
-
     return {"value": obj}
 
 
@@ -176,11 +159,37 @@ def compact_profile(profile_obj: Any) -> dict[str, Any]:
         "verified": data.get("verified"),
         "blue": data.get("blue"),
         "blueType": data.get("blueType"),
-        "descriptionLinks": [
-            compact_link(link)
-            for link in data.get("descriptionLinks", []) or []
-        ],
+        "descriptionLinks": [compact_link(link) for link in data.get("descriptionLinks", []) or []],
         "pinnedIds": data.get("pinnedIds") or [],
+    }
+
+
+def compact_profile_lite(profile_obj: Any) -> dict[str, Any]:
+    profile = compact_profile(profile_obj)
+    return {
+        "id": profile.get("id"),
+        "id_str": profile.get("id_str"),
+        "url": profile.get("url"),
+        "username": profile.get("username"),
+        "displayname": profile.get("displayname"),
+        "created": profile.get("created"),
+        "followersCount": profile.get("followersCount"),
+        "followingCount": profile.get("followingCount"),
+        "statusesCount": profile.get("statusesCount"),
+        "favouritesCount": profile.get("favouritesCount"),
+        "listedCount": profile.get("listedCount"),
+        "mediaCount": profile.get("mediaCount"),
+        "protected": profile.get("protected"),
+        "verified": profile.get("verified"),
+        "blue": profile.get("blue"),
+        "blueType": profile.get("blueType"),
+        "has_bio": bool(profile.get("bio")),
+        "bio_length": len(profile.get("bio") or ""),
+        "has_location": bool(profile.get("location")),
+        "has_profile_image": bool(profile.get("profileImageUrl")),
+        "has_banner": bool(profile.get("profileBannerUrl")),
+        "description_link_count": len(profile.get("descriptionLinks") or []),
+        "pinned_count": len(profile.get("pinnedIds") or []),
     }
 
 
@@ -202,15 +211,53 @@ def compact_post(tweet_obj: Any) -> dict[str, Any]:
         "source": data.get("source"),
         "hashtags": data.get("hashtags") or [],
         "cashtags": data.get("cashtags") or [],
-        "links": [
-            compact_link(link)
-            for link in data.get("links", []) or []
-        ],
-        "mentionedUsers": [
-            compact_user_ref(user)
-            for user in data.get("mentionedUsers", []) or []
-        ],
+        "links": [compact_link(link) for link in data.get("links", []) or []],
+        "mentionedUsers": [compact_user_ref(user) for user in data.get("mentionedUsers", []) or []],
         "media": compact_media(data.get("media")),
+    }
+
+
+async def get_api() -> API:
+    db_path = get_accounts_db_path()
+
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"twscrape accounts DB not found at {db_path}. "
+            "Move accounts.db there or set TWITTER_ACCOUNTS_DB."
+        )
+
+    return API(
+        str(db_path),
+        proxy=get_env("TWS_PROXY"),
+        raise_when_no_account=True,
+    )
+
+
+async def fetch_profile(api: API, username: str) -> Any:
+    profile_obj = await api.user_by_login(username)
+    if profile_obj is None:
+        raise RuntimeError(f"Profile not found for @{username}")
+    return profile_obj
+
+
+async def download_twitter_lite_data(link: str) -> dict[str, Any]:
+    username = parse_account_link(link)
+    api = await get_api()
+
+    logger.info("Downloading lite X profile for @%s", username)
+    profile_obj = await fetch_profile(api, username)
+
+    return {
+        "time": utc_now_iso_ms_z(),
+        "source": "twscrape",
+        "mode": "lite",
+        "input": {
+            "link": link,
+            "username": username,
+            "posts_limit": 0,
+        },
+        "profile": compact_profile_lite(profile_obj),
+        "posts": [],
     }
 
 
@@ -220,26 +267,10 @@ async def download_twitter_profile_data(
 ) -> dict[str, Any]:
     username = parse_account_link(link)
     posts_limit = get_post_limit(posts_limit)
-    db_path = get_accounts_db_path()
-
-    if not db_path.exists():
-        raise FileNotFoundError(
-            f"twscrape accounts DB not found at {db_path}. "
-            "Move accounts.db there or set TWITTER_ACCOUNTS_DB."
-        )
-
-    api = API(
-        str(db_path),
-        proxy=get_env("TWS_PROXY"),
-        raise_when_no_account=True,
-    )
+    api = await get_api()
 
     logger.info("Downloading X profile for @%s", username)
-
-    profile_obj = await api.user_by_login(username)
-    if profile_obj is None:
-        raise RuntimeError(f"Profile not found for @{username}")
-
+    profile_obj = await fetch_profile(api, username)
     profile = compact_profile(profile_obj)
     user_id = profile.get("id")
 
@@ -256,6 +287,7 @@ async def download_twitter_profile_data(
     return {
         "time": utc_now_iso_ms_z(),
         "source": "twscrape",
+        "mode": "posts",
         "input": {
             "link": link,
             "username": username,
@@ -270,16 +302,17 @@ async def main(
     link: str,
     save_dir: Path = ANALYTICS_DIR,
     posts_limit: int | None = None,
+    lite: bool = False,
 ) -> dict[str, Any]:
-    """Download profile/post fields and save to ``save_dir / twitter.json``."""
     configure_logging()
 
-    output = await download_twitter_profile_data(
-        link=link,
-        posts_limit=posts_limit,
+    output = (
+        await download_twitter_lite_data(link)
+        if lite
+        else await download_twitter_profile_data(link=link, posts_limit=posts_limit)
     )
 
-    output_path = save_dir / OUTPUT_FILENAME
+    output_path = save_dir / (LITE_OUTPUT_FILENAME if lite else OUTPUT_FILENAME)
     save_json(output_path, output)
 
     logger.info("Saved Twitter profile data to %s", output_path)
@@ -290,6 +323,7 @@ async def main(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("link", help="X/Twitter profile link, e.g. https://x.com/purple_bitcoin_")
+    parser.add_argument("--lite", action="store_true")
     parser.add_argument(
         "--posts-limit",
         type=int,
@@ -303,16 +337,18 @@ if __name__ == "__main__":
             args.link,
             save_dir=TMP_DIR,
             posts_limit=args.posts_limit,
+            lite=args.lite,
         )
     )
 
     print(
         json.dumps(
             {
-                "saved_to": str(TMP_DIR / OUTPUT_FILENAME),
+                "saved_to": str(TMP_DIR / (LITE_OUTPUT_FILENAME if args.lite else OUTPUT_FILENAME)),
                 "username": result["input"]["username"],
-                "followersCount": result["profile"]["followersCount"],
-                "followingCount": result["profile"]["followingCount"],
+                "mode": result["mode"],
+                "followersCount": result["profile"].get("followersCount"),
+                "followingCount": result["profile"].get("followingCount"),
                 "posts": len(result["posts"]),
             },
             indent=2,
