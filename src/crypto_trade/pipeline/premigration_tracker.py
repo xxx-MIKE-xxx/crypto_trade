@@ -99,11 +99,27 @@ def next_poll_ms(*, has_pairs: bool, age_ms: int, score: float, polling_cfg: dic
     )
 
 
-def deterministic_sample(mint: str, rate: float) -> bool:
-    if rate <= 0:
-        return False
-    n = int(hashlib.sha256(mint.encode("utf-8")).hexdigest()[:8], 16) / 0xFFFFFFFF
-    return n < rate
+def deterministic_unit(value: str) -> float:
+    return int(hashlib.sha256(value.encode("utf-8")).hexdigest()[:8], 16) / 0xFFFFFFFF
+
+
+def market_cap_sample_rate(market_cap: float, selection_cfg: dict[str, Any]) -> tuple[float, int | None]:
+    sample_cfg = selection_cfg.get("market_cap_random_sample") or {}
+    if not sample_cfg.get("enabled") or market_cap <= 0:
+        return 0.0, None
+
+    trigger = float(selection_cfg["migration_market_cap_usd"]) * float(selection_cfg["trigger_fraction"])
+    interval = trigger * float(sample_cfg.get("interval_fraction_of_trigger", 0.1))
+    if trigger <= 0 or interval <= 0:
+        return 0.0, None
+
+    limit_rate = float(sample_cfg.get("limit_rate", 0.0))
+    lower_fraction = float(sample_cfg.get("lower_interval_fraction", 0.7))
+    bin_index = max(0, min(int(market_cap // interval), int(trigger // interval) - 1))
+    top_bin = max(0, int(trigger // interval) - 1)
+    distance_from_top = top_bin - bin_index
+
+    return limit_rate * (lower_fraction ** distance_from_top), bin_index
 
 
 def social_url(pair: dict[str, Any], name: str) -> str | None:
@@ -151,8 +167,11 @@ def should_enrich(mint: str, market_cap: float, selection_cfg: dict[str, Any]) -
     trigger = float(selection_cfg["migration_market_cap_usd"]) * float(selection_cfg["trigger_fraction"])
     if market_cap >= trigger:
         return True, "market_cap_threshold"
-    if deterministic_sample(mint, float(selection_cfg.get("random_sample_rate", 0))):
-        return True, "random_control_sample"
+
+    sample_rate, bin_index = market_cap_sample_rate(market_cap, selection_cfg)
+    if deterministic_unit(mint) < sample_rate:
+        return True, f"market_cap_control_sample_bin_{bin_index}_rate_{sample_rate:.6f}"
+
     return False, "not_selected"
 
 
