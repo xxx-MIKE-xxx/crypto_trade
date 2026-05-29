@@ -12,6 +12,19 @@ security:
   cancel_on_red_flags: true
   red_flags_config: config/red_flags.yaml
 
+holder_snapshots:
+  enabled: true
+  largest_accounts: true
+  token_accounts: selected_only
+  address_transactions: selected_only
+  schedule:
+    - label: migration
+      delay_seconds: 0
+    - label: migration_plus_5m
+      delay_seconds: 300
+    - label: migration_plus_30m
+      delay_seconds: 1800
+
 analytics:
   website_enabled: true
   twitter_enabled: true
