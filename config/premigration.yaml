@@ -23,7 +23,11 @@ dead_detection:
 selection:
   migration_market_cap_usd: 69000
   trigger_fraction: 0.5
-  random_sample_rate: 0.02
+  market_cap_random_sample:
+    enabled: true
+    limit_rate: 0.05
+    interval_fraction_of_trigger: 0.1
+    lower_interval_fraction: 0.7
 
 enrichment_limits:
   security_per_minute: 30
