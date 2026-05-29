@@ -21,6 +21,7 @@ from crypto_trade.pipeline.premigration_state import PreMigrationState
 
 CONFIG_PATH = CONFIG_DIR / "premigration.yaml"
 BATCH_SIZE = 30
+RETRYABLE_ERRORS = {"TimeoutError", "ReadTimeout", "ConnectTimeout", "PoolTimeout", "RateLimitError"}
 TWITTER_RESERVED_PATHS = {
     "i", "home", "explore", "search", "notifications", "messages", "settings",
     "login", "signup", "intent", "share", "privacy", "tos",
@@ -69,17 +70,22 @@ def max_market_cap_usd(pairs: list[dict[str, Any]]) -> float:
     return max((float((p.get("marketCap") or p.get("fdv") or 0) or 0) for p in pairs), default=0.0)
 
 
-def pair_score(pairs: list[dict[str, Any]]) -> float:
+def window_volume(pair: dict[str, Any], window: str) -> float:
+    return float((pair.get("volume") or {}).get(window) or 0)
+
+
+def window_txns(pair: dict[str, Any], window: str) -> float:
+    txns = (pair.get("txns") or {}).get(window) or {}
+    return float(txns.get("buys") or 0) + float(txns.get("sells") or 0)
+
+
+def activity_score(pairs: list[dict[str, Any]]) -> float:
     if not pairs:
         return 0.0
 
-    vol5 = max(float((p.get("volume") or {}).get("m5") or 0) for p in pairs)
+    vol5 = max(window_volume(p, "m5") for p in pairs)
+    tx5 = max(window_txns(p, "m5") for p in pairs)
     liq = max(float((p.get("liquidity") or {}).get("usd") or 0) for p in pairs)
-    tx5 = max(
-        float(((p.get("txns") or {}).get("m5") or {}).get("buys") or 0)
-        + float(((p.get("txns") or {}).get("m5") or {}).get("sells") or 0)
-        for p in pairs
-    )
 
     score = (
         0.45 * math.log1p(vol5) / math.log1p(10_000)
@@ -87,6 +93,20 @@ def pair_score(pairs: list[dict[str, Any]]) -> float:
         + 0.20 * math.log1p(liq) / math.log1p(100_000)
     )
     return max(0.0, min(score, 1.0))
+
+
+def priority_score(pairs: list[dict[str, Any]], market_cap: float, selection_cfg: dict[str, Any]) -> float:
+    trigger = float(selection_cfg["migration_market_cap_usd"]) * float(selection_cfg["trigger_fraction"])
+    progress = max(0.0, min(market_cap / trigger, 1.0)) if trigger > 0 else 0.0
+    return max(0.0, min(0.75 * activity_score(pairs) + 0.25 * progress, 1.0))
+
+
+def is_inactive(pairs: list[dict[str, Any]], dead_cfg: dict[str, Any]) -> bool:
+    if not pairs:
+        return False
+    max_volume = float(dead_cfg["max_volume_m5_usd"])
+    max_txns = float(dead_cfg["max_txns_m5"])
+    return all(window_volume(pair, "m5") <= max_volume and window_txns(pair, "m5") <= max_txns for pair in pairs)
 
 
 def next_interval_ms(score: float, min_s: int, max_s: int) -> int:
@@ -232,6 +252,12 @@ def should_enrich(mint: str, market_cap: float, selection_cfg: dict[str, Any]) -
     return False, "not_selected"
 
 
+def enrichment_done_result(result: Any) -> bool:
+    if not isinstance(result, dict) or result.get("ok") is not False:
+        return True
+    return result.get("error_type") not in RETRYABLE_ERRORS
+
+
 async def save_enrichment_row(root: Path, name: str, mint: str, trigger_reason: str, result: Any) -> None:
     append_jsonl(
         enrichment_path(root, name),
@@ -274,7 +300,8 @@ async def collect_enrichment(
         result = error_result(exc)
 
     await save_enrichment_row(root, name, mint, trigger_reason, result)
-    state.mark_enrichment_done(mint, name)
+    if enrichment_done_result(result):
+        state.mark_enrichment_done(mint, name)
 
 
 async def run_enrichments(
@@ -399,21 +426,25 @@ async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: 
         for mint in mints:
             pairs = pairs_for_mint(response.data, mint)
             pair = best_pair(pairs)
-            score = pair_score(pairs)
             market_cap = max_market_cap_usd(pairs)
-            state.update_after_dex_poll(
+            score = priority_score(pairs, market_cap, cfg["selection"])
+            age_ms = state.mint_age_ms(mint)
+            state_result = state.update_after_dex_poll(
                 mint,
                 has_pairs=bool(pairs),
+                inactive=is_inactive(pairs, cfg["dead_detection"]),
                 score=score,
                 next_poll_ms=next_poll_ms(
                     has_pairs=bool(pairs),
-                    age_ms=state.mint_age_ms(mint),
+                    age_ms=age_ms,
                     score=score,
                     polling_cfg=cfg["polling"],
                 ),
                 no_pair_dead_ms=int(cfg["dead_detection"]["no_pair_after_minutes"]) * 60_000,
+                inactive_dead_ms=int(cfg["dead_detection"]["inactive_after_minutes"]) * 60_000,
+                inactive_confirmations=int(cfg["dead_detection"]["inactive_confirmations"]),
                 max_track_ms=int(cfg["polling"]["max_track_hours"]) * 60 * 60_000,
-            )
+            ) or {}
             append_jsonl(
                 dex_path(root),
                 {
@@ -428,6 +459,10 @@ async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: 
                     "error_message": response.error_message,
                     "priority_score": score,
                     "market_cap_usd": market_cap,
+                    "inactive": is_inactive(pairs, cfg["dead_detection"]),
+                    "status_after_poll": state_result.get("status"),
+                    "dead_reason": state_result.get("dead_reason"),
+                    "inactive_polls": state_result.get("inactive_polls"),
                     "data": pairs,
                 },
             )
