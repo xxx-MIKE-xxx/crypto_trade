@@ -48,6 +48,10 @@ def orchestrator_log_path(cfg: PipelineConfig) -> Path:
     return cfg.data_root / "raw" / "orchestrator" / f"{utc_now_iso_ms_z()[:10]}.jsonl"
 
 
+def optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
 async def log_event(
     cfg: PipelineConfig,
     sink: EventSink,
@@ -261,8 +265,8 @@ def start_onchain_capture(
                 "infer_vaults_limit": int(onchain_cfg["infer_vaults_limit"]),
                 "simulate_tx_base64": onchain_cfg.get("simulate_tx_base64"),
                 "performance_sample_limit": int(onchain_cfg["performance_sample_limit"]),
-                "max_signatures_per_address": int(onchain_cfg["max_signatures_per_address"]),
-                "max_transactions_total": int(onchain_cfg["max_transactions_total"]),
+                "max_signatures_per_address": optional_int(onchain_cfg.get("max_signatures_per_address")),
+                "max_transactions_total": optional_int(onchain_cfg.get("max_transactions_total")),
                 "save_dir": save_dir,
                 "window_start_ms": window_start_ms,
                 "backfill_on_cancel": backfill_on_cancel,
