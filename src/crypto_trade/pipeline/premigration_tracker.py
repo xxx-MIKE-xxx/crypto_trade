@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import logging
 import math
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,8 @@ TWITTER_RESERVED_PATHS = {
     "i", "home", "explore", "search", "notifications", "messages", "settings",
     "login", "signup", "intent", "share", "privacy", "tos",
 }
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_path(path: str | Path) -> Path:
@@ -293,6 +296,7 @@ async def collect_enrichment(
     if not state.enrichment_due(mint, name):
         return
 
+    state.mark_enrichment_selected(mint, trigger_reason)
     await limiter.wait()
     try:
         result = await coro_factory()
@@ -393,6 +397,27 @@ async def pumpportal_loop(state: PreMigrationState, root: Path, url: str | None)
             state.upsert_mint(mint)
 
 
+async def dashboard_loop(cfg: dict[str, Any], state: PreMigrationState) -> None:
+    dashboard_cfg = cfg.get("dashboard") or {}
+    if not dashboard_cfg.get("enabled", True):
+        return
+
+    trigger = float(cfg["selection"]["migration_market_cap_usd"]) * float(cfg["selection"]["trigger_fraction"])
+    interval = int(dashboard_cfg.get("interval_seconds", 30))
+
+    while True:
+        stats = state.dashboard_stats(trigger)
+        logger.info(
+            "PREMIGRATION DASHBOARD | mints=%s active=%s migrated=%s dead=%s expired=%s "
+            "tracking_level=%s due=%s analytics: threshold=%s random=%s security=%s x=%s telegram=%s website=%s",
+            stats["mints_seen"], stats["active"], stats["migrated"], stats["dead"], stats["expired"],
+            stats["tracking_level_reached"], stats["due_now"], stats["threshold_analytics_selected"],
+            stats["random_analytics_sampled"], stats["security_reports"], stats["twitter_lite_reports"],
+            stats["telegram_lite_reports"], stats["website_reports"],
+        )
+        await asyncio.sleep(interval)
+
+
 async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: Path) -> None:
     request_delay = 60 / int(cfg["dexscreener"]["max_requests_per_minute"])
     limiters = {
@@ -429,11 +454,13 @@ async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: 
             market_cap = max_market_cap_usd(pairs)
             score = priority_score(pairs, market_cap, cfg["selection"])
             age_ms = state.mint_age_ms(mint)
+            inactive = is_inactive(pairs, cfg["dead_detection"])
             state_result = state.update_after_dex_poll(
                 mint,
                 has_pairs=bool(pairs),
-                inactive=is_inactive(pairs, cfg["dead_detection"]),
+                inactive=inactive,
                 score=score,
+                market_cap_usd=market_cap,
                 next_poll_ms=next_poll_ms(
                     has_pairs=bool(pairs),
                     age_ms=age_ms,
@@ -459,7 +486,7 @@ async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: 
                     "error_message": response.error_message,
                     "priority_score": score,
                     "market_cap_usd": market_cap,
-                    "inactive": is_inactive(pairs, cfg["dead_detection"]),
+                    "inactive": inactive,
                     "status_after_poll": state_result.get("status"),
                     "dead_reason": state_result.get("dead_reason"),
                     "inactive_polls": state_result.get("inactive_polls"),
@@ -490,6 +517,7 @@ async def main(config_path: Path) -> None:
     await asyncio.gather(
         pumpportal_loop(state, root, cfg.get("pumpportal", {}).get("url")),
         dexscreener_loop(cfg, state, root),
+        dashboard_loop(cfg, state),
     )
 
 
