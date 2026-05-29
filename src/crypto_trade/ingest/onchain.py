@@ -111,16 +111,20 @@ async def fetch_signatures_for_address(
     address: str,
     start_ms: int | None = None,
     end_ms: int | None = None,
-    max_signatures: int = 1000,
+    max_signatures: int | None = None,
 ) -> list[str]:
     signatures: list[str] = []
     before = None
     start_s = start_ms // 1000 if start_ms else None
     end_s = end_ms // 1000 if end_ms else None
 
-    while len(signatures) < max_signatures:
+    while True:
+        remaining = None if max_signatures is None else max_signatures - len(signatures)
+        if remaining is not None and remaining <= 0:
+            break
+
         config: dict[str, Any] = {
-            "limit": min(1000, max_signatures - len(signatures)),
+            "limit": 1000 if remaining is None else min(1000, remaining),
             "commitment": "confirmed",
         }
 
@@ -151,7 +155,7 @@ async def fetch_signatures_for_address(
 
             signatures.append(signature)
 
-            if len(signatures) >= max_signatures:
+            if max_signatures is not None and len(signatures) >= max_signatures:
                 break
 
         before = rows[-1].get("signature")
@@ -221,7 +225,6 @@ async def poll_rpc_methods(
 ) -> None:
     if not specs:
         return
-
     start = now_ms()
 
     while now_ms() - start < capture_time * 1000:
@@ -261,8 +264,8 @@ async def backfill_transactions(
     addresses: list[str],
     start_ms: int,
     end_ms: int,
-    max_signatures_per_address: int,
-    max_transactions_total: int,
+    max_signatures_per_address: int | None,
+    max_transactions_total: int | None,
 ) -> None:
     signatures: dict[str, set[str]] = {}
 
@@ -281,8 +284,12 @@ async def backfill_transactions(
     txs: dict[str, dict[str, Any]] = {}
     start_s = start_ms // 1000
     end_s = end_ms // 1000
+    signature_items = list(signatures.items())
 
-    for signature, source_addresses in list(signatures.items())[:max_transactions_total]:
+    if max_transactions_total is not None:
+        signature_items = signature_items[:max_transactions_total]
+
+    for signature, source_addresses in signature_items:
         tx = await fetch_transaction(rpc, signature)
         if not tx:
             continue
@@ -310,7 +317,7 @@ async def backfill_transactions(
             "addresses": addresses,
             "signature_count": len(signatures),
             "transaction_count": len(transactions),
-            "estimated_credits": len(addresses) + min(len(signatures), max_transactions_total),
+            "estimated_credits": len(addresses) + len(signature_items),
             "max_signatures_per_address": max_signatures_per_address,
             "max_transactions_total": max_transactions_total,
             "transactions": transactions,
@@ -383,8 +390,8 @@ async def main(
     infer_vaults_limit: int,
     simulate_tx_base64: str | None,
     performance_sample_limit: int,
-    max_signatures_per_address: int,
-    max_transactions_total: int,
+    max_signatures_per_address: int | None,
+    max_transactions_total: int | None,
     save_dir: Path | None = None,
     window_start_ms: int | None = None,
     pool_state: str | None = None,
@@ -505,8 +512,8 @@ if __name__ == "__main__":
     parser.add_argument("--rpc-interval", type=int, default=60)
     parser.add_argument("--simulate-tx-base64", default=None)
     parser.add_argument("--performance-sample-limit", type=int, default=60)
-    parser.add_argument("--max-signatures-per-address", type=int, default=1000)
-    parser.add_argument("--max-transactions-total", type=int, default=3000)
+    parser.add_argument("--max-signatures-per-address", type=int, default=None)
+    parser.add_argument("--max-transactions-total", type=int, default=None)
     args = parser.parse_args()
 
     asyncio.run(
