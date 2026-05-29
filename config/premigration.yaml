@@ -2,32 +2,25 @@ storage:
   root: data/raw/premigration
 
 pumpportal:
-  mints: true
-  migrations: true
+  url: null
 
 dexscreener:
   enabled: true
+  max_requests_per_minute: 240
   batch_size: 30
-  max_requests_per_minute: 300
 
 polling:
-  new_coin_seconds: 15
-  active_seconds: 30
-  growing_seconds: 10
-  slow_seconds: 120
-  dead_candidate_seconds: 300
+  fresh_empty_seconds: 10
+  fresh_empty_minutes: 10
+  min_seconds: 10
+  max_seconds: 300
+  idle_sleep_seconds: 2
   max_track_hours: 24
 
 dead_detection:
   no_pair_after_minutes: 60
-  no_volume_after_minutes: 30
-  zero_liquidity_confirmations: 3
 
-security_light:
+security:
   enabled: true
-  provider_order:
-    - goplus
-    - rugcheck
-  min_liquidity_usd: 1000
-  min_volume_5m_usd: 500
-  min_txns_5m: 20
+  migration_market_cap_usd: 69000
+  trigger_fraction: 0.5
