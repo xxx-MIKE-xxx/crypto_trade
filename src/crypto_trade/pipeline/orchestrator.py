@@ -26,18 +26,13 @@ from crypto_trade.pipeline.premigration_state import PreMigrationState
 from crypto_trade.pipeline.state import StateStore
 
 ORCHESTRATOR_CONFIG_PATH = CONFIG_DIR / "orchestrator.yaml"
+DEXSCREENER_HEARTBEAT_NAME = "dexscreener_loop_heartbeat"
+DEXSCREENER_HEARTBEAT_PATH = Path("dexscreener_loop")
+DEXSCREENER_QUEUE_STALE_MS = 90_000
 
 PAIR_KEYS = {
-    "pair",
-    "pairaddress",
-    "pool",
-    "pooladdress",
-    "raydiumpool",
-    "raydiumpooladdress",
-    "amm",
-    "ammid",
-    "market",
-    "marketid",
+    "pair", "pairaddress", "pool", "pooladdress", "raydiumpool",
+    "raydiumpooladdress", "amm", "ammid", "market", "marketid",
 }
 
 
@@ -65,6 +60,15 @@ def optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
 
 
+def shared_dexscreener_active(cfg: PipelineConfig) -> bool:
+    state = PreMigrationState(premigration_state_path(cfg))
+    try:
+        heartbeat_ms = state.get_cursor(DEXSCREENER_HEARTBEAT_NAME, DEXSCREENER_HEARTBEAT_PATH)
+    finally:
+        state.close()
+    return bool(heartbeat_ms and now_ms() - heartbeat_ms <= DEXSCREENER_QUEUE_STALE_MS)
+
+
 async def log_event(
     cfg: PipelineConfig,
     sink: EventSink,
@@ -81,9 +85,7 @@ async def log_event(
         "mint": mint,
         **(payload or {}),
     }
-
     append_jsonl(orchestrator_log_path(cfg), row)
-
     await sink.write(
         source="orchestrator",
         event_type=event_type,
@@ -97,20 +99,16 @@ def find_pair_address(obj: Any) -> str | None:
     if isinstance(obj, Mapping):
         for key, value in obj.items():
             normalized = str(key).replace("_", "").replace("-", "").lower()
-
             if normalized in PAIR_KEYS and looks_like_solana_address(value):
                 return str(value)
-
             nested = find_pair_address(value)
             if nested:
                 return nested
-
     if isinstance(obj, list):
         for item in obj:
             nested = find_pair_address(item)
             if nested:
                 return nested
-
     return None
 
 
@@ -123,7 +121,6 @@ def first_website(pair: dict[str, Any]) -> str | None:
     for website in (pair.get("info") or {}).get("websites") or []:
         if isinstance(website, dict) and website.get("url"):
             return str(website["url"])
-
     return None
 
 
@@ -131,16 +128,10 @@ def first_social(pair: dict[str, Any], name: str) -> str | None:
     for social in (pair.get("info") or {}).get("socials") or []:
         if not isinstance(social, dict):
             continue
-
         social_type = str(social.get("type") or "").lower()
         url = social.get("url")
-
-        if url and social_type == name:
+        if url and (social_type == name or (name == "twitter" and social_type == "x")):
             return str(url)
-
-        if url and name == "twitter" and social_type == "x":
-            return str(url)
-
     return None
 
 
@@ -151,7 +142,6 @@ def metadata_from_security_report(
 ) -> dict[str, Any]:
     pair = dex_pair(security_report) if security_report else {}
     base_token = pair.get("baseToken") or {}
-
     return {
         "name": base_token.get("name") or migration_event.get("name") or mint,
         "symbol": base_token.get("symbol") or migration_event.get("symbol") or mint[:6],
@@ -177,22 +167,12 @@ async def run_stage(
     kwargs = kwargs or {}
     started = utc_now_iso_ms_z()
     job_id = state.start_job(mint, stage, ["direct", stage])
-
-    await log_event(
-        cfg,
-        sink,
-        event_type=f"{stage}_started",
-        mint=mint,
-        payload={"started": started},
-    )
-
+    await log_event(cfg, sink, event_type=f"{stage}_started", mint=mint, payload={"started": started})
     try:
         result = fn(*args, **kwargs)
         if inspect.isawaitable(result):
             result = await result
-
         state.finish_job(job_id, status="ok", return_code=0)
-
         await log_event(
             cfg,
             sink,
@@ -200,12 +180,9 @@ async def run_stage(
             mint=mint,
             payload={"started": started, "finished": utc_now_iso_ms_z()},
         )
-
         return result
-
     except asyncio.CancelledError:
         state.finish_job(job_id, status="cancelled", error="cancelled")
-
         await log_event(
             cfg,
             sink,
@@ -214,12 +191,9 @@ async def run_stage(
             payload={"started": started, "finished": utc_now_iso_ms_z()},
             level="warning",
         )
-
         raise
-
     except Exception as exc:
         state.finish_job(job_id, status="error", error=repr(exc))
-
         await log_event(
             cfg,
             sink,
@@ -228,10 +202,8 @@ async def run_stage(
             payload={"error": repr(exc)},
             level="error",
         )
-
         if required:
             raise
-
         return None
 
 
@@ -254,9 +226,6 @@ def register_shared_dexscreener_target(
     dexscreener_cfg: dict[str, Any],
     start_ms: int,
 ) -> None:
-    if not dexscreener_cfg.get("enabled") or not dexscreener_cfg.get("use_shared_queue"):
-        return
-
     state = PreMigrationState(premigration_state_path(cfg))
     try:
         state.register_dex_target(
@@ -332,7 +301,6 @@ def start_holder_snapshots(
 ) -> asyncio.Task[Any] | None:
     if not holder_cfg.get("enabled", False):
         return None
-
     return asyncio.create_task(
         run_stage(
             cfg=cfg,
@@ -351,16 +319,10 @@ def start_holder_snapshots(
     )
 
 
-def save_website_report(
-    *,
-    mint: str,
-    meta: dict[str, Any],
-    save_dir: Path,
-) -> Path | None:
+def save_website_report(*, mint: str, meta: dict[str, Any], save_dir: Path) -> Path | None:
     website_url = meta.get("website")
     if not website_url:
         return None
-
     report = website_grader.run_report(
         coin_name=str(meta.get("name") or mint),
         coin_symbol=str(meta.get("symbol") or mint[:6]),
@@ -369,7 +331,6 @@ def save_website_report(
         x_account=meta.get("twitter"),
         telegram_link=meta.get("telegram"),
     )
-
     return website_grader.save_report(report, save_dir / "website_report.json")
 
 
@@ -385,7 +346,6 @@ async def run_optional_analytics(
     analytics_cfg = orch_cfg["analytics"]
     save_dir = analytics_dir(cfg, mint)
     tasks = []
-
     if analytics_cfg["website_enabled"] and meta.get("website"):
         tasks.append(
             run_stage(
@@ -399,7 +359,6 @@ async def run_optional_analytics(
                 kwargs={"mint": mint, "meta": meta, "save_dir": save_dir},
             )
         )
-
     if analytics_cfg["twitter_enabled"] and meta.get("twitter"):
         tasks.append(
             run_stage(
@@ -416,7 +375,6 @@ async def run_optional_analytics(
                 },
             )
         )
-
     if analytics_cfg["telegram_enabled"] and meta.get("telegram"):
         tasks.append(
             run_stage(
@@ -426,16 +384,39 @@ async def run_optional_analytics(
                 mint=mint,
                 stage="telegram",
                 fn=telegram_info.main,
-                kwargs={
-                    "mint": mint,
-                    "invite_link": str(meta["telegram"]),
-                    "save_dir": save_dir,
-                },
+                kwargs={"mint": mint, "invite_link": str(meta["telegram"]), "save_dir": save_dir},
             )
         )
-
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def run_post_migration_dexscreener(
+    *,
+    cfg: PipelineConfig,
+    state: StateStore,
+    sink: EventSink,
+    mint: str,
+    save_dir: Path,
+    dexscreener_cfg: dict[str, Any],
+) -> None:
+    state.mark_status(mint, "dexscreener_24h")
+    await run_stage(
+        cfg=cfg,
+        state=state,
+        sink=sink,
+        mint=mint,
+        stage="dexscreener_24h",
+        fn=dexscreener.stream_dexscreener_24h,
+        kwargs={
+            "mint": mint,
+            "interval": int(
+                dexscreener_cfg.get("post_migration_interval_seconds", dexscreener_cfg.get("interval", 60))
+            ),
+            "length": int(dexscreener_cfg["length"]),
+            "save_dir": save_dir,
+        },
+    )
 
 
 async def migrated_token_worker(
@@ -457,7 +438,6 @@ async def migrated_token_worker(
 
         a_dir = analytics_dir(cfg, mint)
         o_dir = onchain_dir(cfg, mint)
-
         a_dir.mkdir(parents=True, exist_ok=True)
         o_dir.mkdir(parents=True, exist_ok=True)
 
@@ -469,14 +449,20 @@ async def migrated_token_worker(
         backfill_on_cancel = bool(drop_cfg["backfill_on_cancel"])
         pair_address = find_pair_address(migration_event)
         active_pair_address = None
-
-        register_shared_dexscreener_target(
-            cfg=cfg,
-            mint=mint,
-            save_dir=o_dir,
-            dexscreener_cfg=dexscreener_cfg,
-            start_ms=capture_start_ms,
+        shared_dexscreener = bool(
+            dexscreener_cfg.get("enabled")
+            and dexscreener_cfg.get("use_shared_queue")
+            and shared_dexscreener_active(cfg)
         )
+
+        if shared_dexscreener:
+            register_shared_dexscreener_target(
+                cfg=cfg,
+                mint=mint,
+                save_dir=o_dir,
+                dexscreener_cfg=dexscreener_cfg,
+                start_ms=capture_start_ms,
+            )
 
         await log_event(
             cfg,
@@ -488,19 +474,13 @@ async def migrated_token_worker(
                 "onchain_dir": str(o_dir),
                 "pair_address": pair_address,
                 "capture_start_ms": capture_start_ms,
-                "shared_dexscreener": bool(dexscreener_cfg.get("use_shared_queue")),
+                "shared_dexscreener": shared_dexscreener,
             },
         )
 
         holder_task = start_holder_snapshots(
-            cfg=cfg,
-            state=state,
-            sink=sink,
-            mint=mint,
-            holder_cfg=holder_cfg,
-            save_dir=o_dir,
+            cfg=cfg, state=state, sink=sink, mint=mint, holder_cfg=holder_cfg, save_dir=o_dir
         )
-
         active_capture_task = start_onchain_capture(
             cfg=cfg,
             state=state,
@@ -515,20 +495,13 @@ async def migrated_token_worker(
             backfill_on_cancel=False,
         )
 
-        async def switch_to_vault_capture(
-            discovered_pair_address: str,
-            event_type: str,
-        ) -> None:
+        async def switch_to_vault_capture(discovered_pair_address: str, event_type: str) -> None:
             nonlocal active_capture_task, active_pair_address
-
             if discovered_pair_address == active_pair_address:
                 return
-
             await cancel_task(active_capture_task)
-
             active_pair_address = discovered_pair_address
             remaining = remaining_capture_seconds(capture_start_ms, capture_seconds)
-
             await log_event(
                 cfg,
                 sink,
@@ -541,7 +514,6 @@ async def migrated_token_worker(
                 },
                 level="warning" if event_type == "pair_address_found_late" else "info",
             )
-
             active_capture_task = start_onchain_capture(
                 cfg=cfg,
                 state=state,
@@ -561,10 +533,8 @@ async def migrated_token_worker(
                 await switch_to_vault_capture(pair_address, "pair_address_found_initially")
 
             security_report = {}
-
             if security_cfg["enabled"]:
                 state.mark_status(mint, "security_checking")
-
                 security_report = await run_stage(
                     cfg=cfg,
                     state=state,
@@ -575,7 +545,6 @@ async def migrated_token_worker(
                     required=True,
                     kwargs={"mint": mint, "save_dir": a_dir},
                 )
-
                 red_flags_result = await run_stage(
                     cfg=cfg,
                     state=state,
@@ -591,11 +560,10 @@ async def migrated_token_worker(
                         "config_path": Path(security_cfg["red_flags_config"]),
                     },
                 )
-
                 if red_flags_result["failed"]:
                     state.mark_status(mint, "dropped_red_flags")
-                    unregister_shared_dexscreener_target(cfg, mint)
-
+                    if shared_dexscreener:
+                        unregister_shared_dexscreener_target(cfg, mint)
                     await log_event(
                         cfg,
                         sink,
@@ -609,17 +577,13 @@ async def migrated_token_worker(
                         },
                         level="warning",
                     )
-
                     await cancel_task(holder_task)
-
                     if security_cfg["cancel_on_red_flags"]:
                         await cancel_task(active_capture_task)
-
                     return
 
             meta = metadata_from_security_report(mint, migration_event, security_report)
             discovered_pair_address = pair_address or meta.get("pair_address")
-
             if discovered_pair_address:
                 await switch_to_vault_capture(
                     str(discovered_pair_address),
@@ -627,56 +591,33 @@ async def migrated_token_worker(
                 )
 
             state.mark_status(mint, "analytics_running")
-
-            await run_optional_analytics(
-                cfg=cfg,
-                state=state,
-                sink=sink,
-                mint=mint,
-                meta=meta,
-                orch_cfg=orch_cfg,
-            )
+            await run_optional_analytics(cfg=cfg, state=state, sink=sink, mint=mint, meta=meta, orch_cfg=orch_cfg)
 
             state.mark_status(mint, "waiting_onchain_capture")
             await active_capture_task
 
-            if dexscreener_cfg["enabled"] and not dexscreener_cfg.get("use_shared_queue"):
-                state.mark_status(mint, "dexscreener_24h")
-
-                await run_stage(
+            if dexscreener_cfg["enabled"] and not shared_dexscreener:
+                await run_post_migration_dexscreener(
                     cfg=cfg,
                     state=state,
                     sink=sink,
                     mint=mint,
-                    stage="dexscreener_24h",
-                    fn=dexscreener.stream_dexscreener_24h,
-                    kwargs={
-                        "mint": mint,
-                        "interval": int(dexscreener_cfg["interval"]),
-                        "length": int(dexscreener_cfg["length"]),
-                        "save_dir": o_dir,
-                    },
+                    save_dir=o_dir,
+                    dexscreener_cfg=dexscreener_cfg,
                 )
 
             if holder_task:
                 await holder_task
 
             state.mark_status(mint, "reports_done")
-
-            await log_event(
-                cfg,
-                sink,
-                event_type="worker_finished",
-                mint=mint,
-                payload={"status": "reports_done"},
-            )
+            await log_event(cfg, sink, event_type="worker_finished", mint=mint, payload={"status": "reports_done"})
 
         except Exception as exc:
             state.mark_status(mint, "failed")
-            unregister_shared_dexscreener_target(cfg, mint)
+            if shared_dexscreener:
+                unregister_shared_dexscreener_target(cfg, mint)
             await cancel_task(active_capture_task)
             await cancel_task(holder_task)
-
             await log_event(
                 cfg,
                 sink,
@@ -685,5 +626,4 @@ async def migrated_token_worker(
                 payload={"error": repr(exc)},
                 level="error",
             )
-
             raise
