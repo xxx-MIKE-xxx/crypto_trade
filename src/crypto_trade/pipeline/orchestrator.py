@@ -219,6 +219,18 @@ async def cancel_task(task: asyncio.Task[Any] | None) -> None:
         await asyncio.gather(task, return_exceptions=True)
 
 
+def detach_task(task: asyncio.Task[Any]) -> None:
+    def consume_result(done_task: asyncio.Task[Any]) -> None:
+        try:
+            done_task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    task.add_done_callback(consume_result)
+
+
 def register_shared_dexscreener_target(
     *,
     cfg: PipelineConfig,
@@ -661,13 +673,23 @@ async def migrated_token_worker(
             await active_capture_task
 
             if dexscreener_cfg["enabled"] and not shared_dexscreener:
-                await run_post_migration_dexscreener(
-                    cfg=cfg,
-                    state=state,
-                    sink=sink,
+                dexscreener_task = asyncio.create_task(
+                    run_post_migration_dexscreener(
+                        cfg=cfg,
+                        state=state,
+                        sink=sink,
+                        mint=mint,
+                        save_dir=o_dir,
+                        dexscreener_cfg=dexscreener_cfg,
+                    )
+                )
+                detach_task(dexscreener_task)
+                await log_event(
+                    cfg,
+                    sink,
+                    event_type="dexscreener_24h_detached",
                     mint=mint,
-                    save_dir=o_dir,
-                    dexscreener_cfg=dexscreener_cfg,
+                    payload={"onchain_dir": str(o_dir)},
                 )
 
             if holder_task:
