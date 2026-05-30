@@ -612,6 +612,14 @@ async def migrated_token_worker(
             state.mark_status(mint, "reports_done")
             await log_event(cfg, sink, event_type="worker_finished", mint=mint, payload={"status": "reports_done"})
 
+        except asyncio.CancelledError:
+            if shared_dexscreener:
+                unregister_shared_dexscreener_target(cfg, mint)
+            await cancel_task(active_capture_task)
+            await cancel_task(holder_task)
+            await log_event(cfg, sink, event_type="worker_cancelled", mint=mint, payload={})
+            raise
+
         except Exception as exc:
             state.mark_status(mint, "failed")
             if shared_dexscreener:
