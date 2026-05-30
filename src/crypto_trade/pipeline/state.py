@@ -14,6 +14,7 @@ from crypto_trade.core.time import utc_now_iso_ms_z
 class StateStore:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        self.closed = False
         self.conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA synchronous=NORMAL;")
@@ -71,6 +72,9 @@ class StateStore:
         event_ts: str,
         payload: Any,
     ) -> bool:
+        if self.closed:
+            return False
+
         event_hash = short_hash(
             f"{source}|{event_type}|{mint or ''}|{compact_json_dumps(payload)}"
         )
@@ -87,6 +91,9 @@ class StateStore:
             return False
 
     def upsert_new_token(self, mint: str, token_dir: Path) -> None:
+        if self.closed:
+            return
+
         now = utc_now_iso_ms_z()
         self.conn.execute(
             """
@@ -101,6 +108,9 @@ class StateStore:
         )
 
     def mark_migrated(self, mint: str, token_dir: Path, event: Mapping[str, Any]) -> bool:
+        if self.closed:
+            return False
+
         now = utc_now_iso_ms_z()
         cur = self.conn.execute(
             "SELECT migrated_ts FROM tokens WHERE mint = ?", (mint,)
@@ -126,6 +136,9 @@ class StateStore:
         return first_migration
 
     def mark_dex_visible(self, mint: str, snapshot: Any) -> None:
+        if self.closed:
+            return
+
         now = utc_now_iso_ms_z()
         self.conn.execute(
             """
@@ -140,6 +153,9 @@ class StateStore:
         )
 
     def mark_status(self, mint: str, status: str) -> None:
+        if self.closed:
+            return
+
         self.conn.execute(
             "UPDATE tokens SET status = ?, updated_ts = ? WHERE mint = ?",
             (status, utc_now_iso_ms_z(), mint),
@@ -147,6 +163,9 @@ class StateStore:
 
     def start_job(self, mint: str | None, stage: str, command: Sequence[str]) -> str:
         job_id = str(uuid.uuid4())
+        if self.closed:
+            return job_id
+
         self.conn.execute(
             """
             INSERT INTO jobs(job_id, mint, stage, command_json, started_ts, status)
@@ -166,6 +185,9 @@ class StateStore:
         stderr_log: Path | None = None,
         error: str | None = None,
     ) -> None:
+        if self.closed:
+            return
+
         self.conn.execute(
             """
             UPDATE jobs
@@ -184,4 +206,8 @@ class StateStore:
         )
 
     def close(self) -> None:
+        if self.closed:
+            return
+
+        self.closed = True
         self.conn.close()
