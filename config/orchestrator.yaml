@@ -10,7 +10,7 @@ onchain:
 failed_tx_capture:
   enabled: true
   log_subscribe: true
-  max_addresses: 6
+  max_addresses: 3
   fetch_failed_transactions: true
   sample_interval_seconds: 60
   fetches_per_interval: 3
