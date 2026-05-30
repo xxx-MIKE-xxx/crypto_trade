@@ -280,12 +280,28 @@ def failed_log_candidate(message: dict[str, Any], watched_address: str) -> dict[
     }
 
 
+async def first_seen_signature(
+    signature: str | None,
+    seen_signatures: set[str],
+    seen_lock: asyncio.Lock,
+) -> bool:
+    if not signature:
+        return True
+    async with seen_lock:
+        if signature in seen_signatures:
+            return False
+        seen_signatures.add(signature)
+        return True
+
+
 async def stream_logs(
     rpc: RPC,
     path: Path,
     account: str,
     capture_time: int,
     candidate_queue: asyncio.Queue[dict[str, Any]],
+    seen_signatures: set[str],
+    seen_lock: asyncio.Lock,
     commitment: str = "processed",
 ) -> None:
     params = [
@@ -322,6 +338,10 @@ async def stream_logs(
                 timeout = max(0.1, end_at - asyncio.get_running_loop().time())
                 msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
                 data = json.loads(msg)
+                signature = logs_value(data).get("signature")
+                if not await first_seen_signature(signature, seen_signatures, seen_lock):
+                    continue
+
                 row = {
                     "type": "websocket_message",
                     "timestamp": now_ts(),
@@ -329,6 +349,7 @@ async def stream_logs(
                     "method": "logsSubscribe",
                     "watched_address": account,
                     "params": params,
+                    "dedupe_key": signature,
                     "data": data,
                 }
                 append_jsonl(path, row)
@@ -731,6 +752,8 @@ async def main(
     failed_cfg = failed_tx_capture or {}
     if failed_cfg.get("enabled", False) and failed_cfg.get("log_subscribe", True):
         candidate_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=10_000)
+        seen_log_signatures: set[str] = set()
+        seen_log_lock = asyncio.Lock()
         max_addresses = int(failed_cfg.get("max_addresses", 6))
         log_addresses = addresses[:max_addresses]
         for account in log_addresses:
@@ -741,6 +764,8 @@ async def main(
                     account=account,
                     capture_time=capture_time,
                     candidate_queue=candidate_queue,
+                    seen_signatures=seen_log_signatures,
+                    seen_lock=seen_log_lock,
                     commitment=str(failed_cfg.get("commitment", "processed")),
                 )
             )
