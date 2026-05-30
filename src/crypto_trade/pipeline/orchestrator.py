@@ -262,6 +262,7 @@ def start_onchain_capture(
     capture_time: int,
     window_start_ms: int,
     backfill_on_cancel: bool,
+    failed_tx_cfg: dict[str, Any] | None = None,
 ) -> asyncio.Task[Any]:
     return asyncio.create_task(
         run_stage(
@@ -286,6 +287,7 @@ def start_onchain_capture(
                 "save_dir": save_dir,
                 "window_start_ms": window_start_ms,
                 "backfill_on_cancel": backfill_on_cancel,
+                "failed_tx_capture": failed_tx_cfg,
             },
         )
     )
@@ -489,6 +491,7 @@ async def migrated_token_worker(
         drop_cfg = orch_cfg["drop"]
         holder_cfg = orch_cfg.get("holder_snapshots", {})
         quote_cfg = orch_cfg.get("jupiter_quotes", {})
+        failed_tx_cfg = orch_cfg.get("failed_tx_capture", {})
 
         a_dir = analytics_dir(cfg, mint)
         o_dir = onchain_dir(cfg, mint)
@@ -550,6 +553,7 @@ async def migrated_token_worker(
             capture_time=capture_seconds,
             window_start_ms=capture_start_ms,
             backfill_on_cancel=False,
+            failed_tx_cfg=failed_tx_cfg,
         )
 
         async def switch_to_vault_capture(discovered_pair_address: str, event_type: str) -> None:
@@ -583,6 +587,7 @@ async def migrated_token_worker(
                 capture_time=remaining,
                 window_start_ms=capture_start_ms,
                 backfill_on_cancel=backfill_on_cancel,
+                failed_tx_cfg=failed_tx_cfg,
             )
 
         try:
