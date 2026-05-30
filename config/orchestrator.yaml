@@ -24,6 +24,14 @@ holder_snapshots:
       delay_seconds: 300
     - label: migration_plus_30m
       delay_seconds: 1800
+  token_accounts_schedule:
+    - label: migration
+      delay_seconds: 0
+    - label: migration_plus_1h
+      delay_seconds: 3600
+  token_accounts_page_limit: 100
+  token_accounts_max_pages: 5
+  token_accounts_max_accounts: 500
 
 jupiter_quotes:
   enabled: true
