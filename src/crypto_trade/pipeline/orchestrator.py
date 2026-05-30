@@ -12,6 +12,7 @@ from crypto_trade.core.yaml import load_yaml
 from crypto_trade.ingest import (
     dexscreener,
     holder_data,
+    jupiter_quotes,
     onchain,
     red_flags,
     security_api,
@@ -319,6 +320,41 @@ def start_holder_snapshots(
     )
 
 
+def start_jupiter_quotes(
+    *,
+    cfg: PipelineConfig,
+    state: StateStore,
+    sink: EventSink,
+    mint: str,
+    quote_cfg: dict[str, Any],
+    save_dir: Path,
+) -> asyncio.Task[Any] | None:
+    if not quote_cfg.get("enabled", False):
+        return None
+    return asyncio.create_task(
+        run_stage(
+            cfg=cfg,
+            state=state,
+            sink=sink,
+            mint=mint,
+            stage="jupiter_quotes",
+            fn=jupiter_quotes.main,
+            kwargs={
+                "mint": mint,
+                "save_dir": save_dir,
+                "interval_seconds": int(quote_cfg.get("interval_seconds", 15)),
+                "length_seconds": int(quote_cfg.get("length_seconds", 1800)),
+                "slippage_bps": int(quote_cfg.get("slippage_bps", 300)),
+                "buy_sol_amounts": quote_cfg.get("buy_sol_amounts"),
+                "sell_base_sol_amounts": quote_cfg.get("sell_base_sol_amounts"),
+                "sell_fractions": quote_cfg.get("sell_fractions"),
+                "restrict_intermediate_tokens": bool(quote_cfg.get("restrict_intermediate_tokens", True)),
+                "only_direct_routes": bool(quote_cfg.get("only_direct_routes", False)),
+            },
+        )
+    )
+
+
 def save_website_report(*, mint: str, meta: dict[str, Any], save_dir: Path) -> Path | None:
     website_url = meta.get("website")
     if not website_url:
@@ -435,6 +471,7 @@ async def migrated_token_worker(
         dexscreener_cfg = orch_cfg["dexscreener"]
         drop_cfg = orch_cfg["drop"]
         holder_cfg = orch_cfg.get("holder_snapshots", {})
+        quote_cfg = orch_cfg.get("jupiter_quotes", {})
 
         a_dir = analytics_dir(cfg, mint)
         o_dir = onchain_dir(cfg, mint)
@@ -480,6 +517,9 @@ async def migrated_token_worker(
 
         holder_task = start_holder_snapshots(
             cfg=cfg, state=state, sink=sink, mint=mint, holder_cfg=holder_cfg, save_dir=o_dir
+        )
+        quote_task = start_jupiter_quotes(
+            cfg=cfg, state=state, sink=sink, mint=mint, quote_cfg=quote_cfg, save_dir=o_dir
         )
         active_capture_task = start_onchain_capture(
             cfg=cfg,
@@ -574,10 +614,12 @@ async def migrated_token_worker(
                             "keep_partial_onchain": drop_cfg["keep_partial_onchain"],
                             "backfill_on_cancel": backfill_on_cancel,
                             "cancelled_holder_snapshots": bool(holder_task),
+                            "cancelled_jupiter_quotes": bool(quote_task),
                         },
                         level="warning",
                     )
                     await cancel_task(holder_task)
+                    await cancel_task(quote_task)
                     if security_cfg["cancel_on_red_flags"]:
                         await cancel_task(active_capture_task)
                     return
@@ -608,6 +650,8 @@ async def migrated_token_worker(
 
             if holder_task:
                 await holder_task
+            if quote_task:
+                await quote_task
 
             state.mark_status(mint, "reports_done")
             await log_event(cfg, sink, event_type="worker_finished", mint=mint, payload={"status": "reports_done"})
@@ -617,6 +661,7 @@ async def migrated_token_worker(
                 unregister_shared_dexscreener_target(cfg, mint)
             await cancel_task(active_capture_task)
             await cancel_task(holder_task)
+            await cancel_task(quote_task)
             await log_event(cfg, sink, event_type="worker_cancelled", mint=mint, payload={})
             raise
 
@@ -626,6 +671,7 @@ async def migrated_token_worker(
                 unregister_shared_dexscreener_target(cfg, mint)
             await cancel_task(active_capture_task)
             await cancel_task(holder_task)
+            await cancel_task(quote_task)
             await log_event(
                 cfg,
                 sink,
