@@ -8,7 +8,7 @@ from crypto_trade.core.io import ensure_dir
 from crypto_trade.core.paths import LOGS_DIR
 
 
-NOISY_LOGGERS = ["httpx", "httpcore"]
+NOISY_LOGGERS = ["httpx", "httpcore", "crypto_trade.ingest.dexscreener"]
 
 
 def configure_logging(level: str = "INFO") -> None:
