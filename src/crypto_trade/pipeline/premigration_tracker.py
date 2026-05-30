@@ -232,7 +232,7 @@ def should_enrich(mint: str, market_cap: float, selection_cfg: dict[str, Any]) -
     trigger = float(selection_cfg["migration_market_cap_usd"]) * float(selection_cfg["trigger_fraction"])
     if market_cap >= trigger:
         return True, "market_cap_threshold"
-    sample_rate, bin_index = market_cap_sample_rate(mint if False else market_cap, selection_cfg)
+    sample_rate, bin_index = market_cap_sample_rate(market_cap, selection_cfg)
     if deterministic_unit(mint) < sample_rate:
         return True, f"market_cap_control_sample_bin_{bin_index}_rate_{sample_rate:.6f}"
     return False, "not_selected"
