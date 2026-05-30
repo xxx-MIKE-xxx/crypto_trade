@@ -25,6 +25,7 @@ from typing import Any
 from crypto_trade.core.env import get_envs, load_env
 from crypto_trade.core.http import request_json
 from crypto_trade.core.io import save_json
+from crypto_trade.core.jupiter import request_jupiter_json
 from crypto_trade.core.logging_config import configure_logging
 from crypto_trade.core.paths import ANALYTICS_DIR
 from crypto_trade.core.time import now_ts
@@ -137,10 +138,9 @@ async def download_goplus(mint: str):
 
 async def download_jupiter(mint: str):
     url = f"{JUPITER_BASE}/search"
-    response = await request_json(
+    response = await request_jupiter_json(
         "GET",
         url,
-        headers={"x-api-key": JUPITER_API_KEY},
         params={"query": mint},
     )
 
