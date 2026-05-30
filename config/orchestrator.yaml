@@ -48,6 +48,7 @@ analytics:
   website_enabled: true
   twitter_enabled: true
   telegram_enabled: true
+  dexscreener_enrichment_enabled: true
   twitter_posts_limit: 20
 
 dexscreener:
