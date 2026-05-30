@@ -18,11 +18,13 @@ from crypto_trade.core.telegram import TELEGRAM
 from crypto_trade.core.time import now_ms, now_ts, utc_now_iso_ms_z
 from crypto_trade.core.yaml import load_yaml
 from crypto_trade.ingest import dexscreener, security_api, twitter, website_grader
-from crypto_trade.ingest.pumpportal import listen
+from crypto_trade.ingest.pumpportal import listen, shared_listen
 from crypto_trade.pipeline.premigration_state import PreMigrationState
 
 CONFIG_PATH = CONFIG_DIR / "premigration.yaml"
 RETRYABLE_ERRORS = {"TimeoutError", "ReadTimeout", "ConnectTimeout", "PoolTimeout", "RateLimitError"}
+DEXSCREENER_HEARTBEAT_NAME = "dexscreener_loop_heartbeat"
+DEXSCREENER_HEARTBEAT_PATH = Path("dexscreener_loop")
 TWITTER_RESERVED_PATHS = {
     "i", "home", "explore", "search", "notifications", "messages", "settings",
     "login", "signup", "intent", "share", "privacy", "tos",
@@ -89,11 +91,9 @@ def window_txns(pair: dict[str, Any], window: str) -> float:
 def activity_score(pairs: list[dict[str, Any]]) -> float:
     if not pairs:
         return 0.0
-
     vol5 = max(window_volume(p, "m5") for p in pairs)
     tx5 = max(window_txns(p, "m5") for p in pairs)
     liq = max(float((p.get("liquidity") or {}).get("usd") or 0) for p in pairs)
-
     score = (
         0.45 * math.log1p(vol5) / math.log1p(10_000)
         + 0.35 * math.log1p(tx5) / math.log1p(200)
@@ -124,12 +124,7 @@ def next_poll_ms(*, has_pairs: bool, age_ms: int, score: float, polling_cfg: dic
     fresh_ms = int(polling_cfg["fresh_empty_minutes"]) * 60_000
     if not has_pairs and age_ms < fresh_ms:
         return now_ms() + int(polling_cfg["fresh_empty_seconds"]) * 1000
-
-    return now_ms() + next_interval_ms(
-        score,
-        int(polling_cfg["min_seconds"]),
-        int(polling_cfg["max_seconds"]),
-    )
+    return now_ms() + next_interval_ms(score, int(polling_cfg["min_seconds"]), int(polling_cfg["max_seconds"]))
 
 
 def deterministic_unit(value: str) -> float:
@@ -140,12 +135,10 @@ def market_cap_sample_rate(market_cap: float, selection_cfg: dict[str, Any]) -> 
     sample_cfg = selection_cfg.get("market_cap_random_sample") or {}
     if not sample_cfg.get("enabled") or market_cap <= 0:
         return 0.0, None
-
     trigger = float(selection_cfg["migration_market_cap_usd"]) * float(selection_cfg["trigger_fraction"])
     interval = trigger * float(sample_cfg.get("interval_fraction_of_trigger", 0.1))
     if trigger <= 0 or interval <= 0:
         return 0.0, None
-
     bin_count = max(1, math.ceil(trigger / interval))
     bin_index = max(0, min(int(market_cap // interval), bin_count - 1))
     lower_fraction = float(sample_cfg.get("lower_interval_fraction", 0.7))
@@ -157,11 +150,9 @@ def market_cap_sample_rate(market_cap: float, selection_cfg: dict[str, Any]) -> 
 def normalize_social_url(url: str | None, kind: str) -> str | None:
     if not url:
         return None
-
     parsed = urlparse(url if "://" in url else f"https://{url}")
     host = parsed.netloc.lower().removeprefix("www.")
     path = parsed.path.strip("/")
-
     if kind == "twitter":
         if host not in {"x.com", "twitter.com"}:
             return None
@@ -169,13 +160,11 @@ def normalize_social_url(url: str | None, kind: str) -> str | None:
         if not username or username.lower() in TWITTER_RESERVED_PATHS:
             return None
         return f"https://x.com/{username}"
-
     if kind == "telegram":
         if host not in {"t.me", "telegram.me"}:
             return None
         group = path.split("/", 1)[0]
         return f"https://t.me/{group}" if group else None
-
     return url
 
 
@@ -199,10 +188,7 @@ def website_url(pair: dict[str, Any]) -> str | None:
 
 def token_meta(mint: str, pair: dict[str, Any]) -> dict[str, str]:
     base = pair.get("baseToken") or {}
-    return {
-        "name": str(base.get("name") or mint),
-        "symbol": str(base.get("symbol") or mint[:6]),
-    }
+    return {"name": str(base.get("name") or mint), "symbol": str(base.get("symbol") or mint[:6])}
 
 
 def telegram_channel_name(link: str) -> str:
@@ -216,10 +202,8 @@ def telegram_channel_name(link: str) -> str:
 async def download_telegram_lite_data(invite_link: str) -> dict[str, Any]:
     channel_name = telegram_channel_name(invite_link)
     session_path = PROJECT_ROOT / "app_data" / "meme_metrics_session"
-
     async with TELEGRAM(int(get_env("TG_API_ID")), get_env("TG_API_HASH"), session_path=session_path) as tg:
         metrics = await tg.collect_lite_info(channel_name)
-
     return {
         "time": utc_now_iso_ms_z(),
         "source": "telethon",
@@ -248,11 +232,9 @@ def should_enrich(mint: str, market_cap: float, selection_cfg: dict[str, Any]) -
     trigger = float(selection_cfg["migration_market_cap_usd"]) * float(selection_cfg["trigger_fraction"])
     if market_cap >= trigger:
         return True, "market_cap_threshold"
-
-    sample_rate, bin_index = market_cap_sample_rate(market_cap, selection_cfg)
+    sample_rate, bin_index = market_cap_sample_rate(mint if False else market_cap, selection_cfg)
     if deterministic_unit(mint) < sample_rate:
         return True, f"market_cap_control_sample_bin_{bin_index}_rate_{sample_rate:.6f}"
-
     return False, "not_selected"
 
 
@@ -292,14 +274,12 @@ async def collect_enrichment(
 ) -> None:
     if not state.enrichment_due(mint, name):
         return
-
     state.mark_enrichment_selected(mint, trigger_reason)
     await limiter.wait()
     try:
         result = await coro_factory()
     except Exception as exc:
         result = error_result(exc)
-
     await save_enrichment_row(root, name, mint, trigger_reason, result)
     if enrichment_done_result(result):
         state.mark_enrichment_done(mint, name)
@@ -318,7 +298,6 @@ async def run_enrichments(
     selected, reason = should_enrich(mint, market_cap, cfg["selection"])
     if not selected:
         return
-
     meta = token_meta(mint, pair)
     site = website_url(pair)
     x_link = social_url(pair, "twitter")
@@ -335,7 +314,6 @@ async def run_enrichments(
             limiter=limiters["security"],
             coro_factory=lambda: security_api.collect_security_report(mint),
         )
-
     if site and enrich_cfg["website"].get("enabled"):
         await collect_enrichment(
             state=state,
@@ -354,7 +332,6 @@ async def run_enrichments(
                 telegram_link=tg_link,
             ),
         )
-
     if x_link and enrich_cfg["twitter_lite"].get("enabled"):
         await collect_enrichment(
             state=state,
@@ -365,7 +342,6 @@ async def run_enrichments(
             limiter=limiters["twitter_lite"],
             coro_factory=lambda: twitter.download_twitter_lite_data(x_link),
         )
-
     if tg_link and enrich_cfg["telegram_lite"].get("enabled"):
         await collect_enrichment(
             state=state,
@@ -381,11 +357,9 @@ async def run_enrichments(
 def process_pumpportal_event(state: PreMigrationState, event: dict[str, Any]) -> None:
     if not state.record_event(event):
         return
-
     mint = event.get("mint")
     if not mint:
         return
-
     if event.get("type") == "migration":
         state.mark_migrated(mint)
     else:
@@ -402,24 +376,20 @@ async def pumpportal_file_loop(cfg: dict[str, Any], state: PreMigrationState) ->
     path = shared_pumpportal_path(cfg)
     poll_seconds = float(cfg["pumpportal"].get("poll_seconds", 1))
     cursor_name = "shared_pumpportal"
+    offset = state.get_cursor(cursor_name, path)
 
-    while True:
-        if not path.exists():
-            await asyncio.sleep(poll_seconds)
-            continue
-
-        offset = state.get_cursor(cursor_name, path)
-        with path.open("r", encoding="utf-8") as f:
-            f.seek(offset)
-            while line := f.readline():
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                process_pumpportal_event(state, event)
-            state.set_cursor(cursor_name, path, f.tell())
-
-        await asyncio.sleep(poll_seconds)
+    async for event, new_offset in shared_listen(
+        path=path,
+        owner="premigration_tracker",
+        url=cfg["pumpportal"].get("url"),
+        initial_offset=offset,
+        poll_seconds=poll_seconds,
+    ):
+        process_pumpportal_event(state, event)
+        if new_offset is not None:
+            state.set_cursor(cursor_name, path, new_offset)
+        elif path.exists():
+            state.set_cursor(cursor_name, path, path.stat().st_size)
 
 
 async def pumpportal_loop(cfg: dict[str, Any], state: PreMigrationState, root: Path) -> None:
@@ -434,10 +404,8 @@ async def dashboard_loop(cfg: dict[str, Any], state: PreMigrationState) -> None:
     dashboard_cfg = cfg.get("dashboard") or {}
     if not dashboard_cfg.get("enabled", True):
         return
-
     trigger = float(cfg["selection"]["migration_market_cap_usd"]) * float(cfg["selection"]["trigger_fraction"])
     interval = int(dashboard_cfg.get("interval_seconds", 30))
-
     while True:
         stats = state.dashboard_stats(trigger)
         logger.info(
@@ -478,12 +446,14 @@ async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: 
     }
 
     while True:
+        state.set_cursor(DEXSCREENER_HEARTBEAT_NAME, DEXSCREENER_HEARTBEAT_PATH, now_ms())
         targets = state.due_dex_targets(batch_size)
         post_mints = list(dict.fromkeys(target["mint"] for target in targets))
         pre_mints = state.due_mints(batch_size - len(post_mints), exclude=set(post_mints))
 
         if coalesce_s and len(post_mints) + len(pre_mints) < batch_size:
             await asyncio.sleep(coalesce_s)
+            state.set_cursor(DEXSCREENER_HEARTBEAT_NAME, DEXSCREENER_HEARTBEAT_PATH, now_ms())
             targets = state.due_dex_targets(batch_size)
             post_mints = list(dict.fromkeys(target["mint"] for target in targets))
             pre_mints = state.due_mints(batch_size - len(post_mints), exclude=set(post_mints))
@@ -516,7 +486,6 @@ async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: 
 
         for mint in mints:
             pairs = pairs_for_mint(response.data, mint)
-
             for target in target_by_mint.get(mint, []):
                 append_jsonl(Path(target["output_path"]), post_row(batch_row, mint, pairs))
                 state.mark_dex_target_polled(mint, target["target_type"])
@@ -567,15 +536,7 @@ async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: 
                     "data": pairs,
                 },
             )
-            await run_enrichments(
-                cfg=cfg,
-                state=state,
-                root=root,
-                mint=mint,
-                pair=pair,
-                market_cap=market_cap,
-                limiters=limiters,
-            )
+            await run_enrichments(cfg=cfg, state=state, root=root, mint=mint, pair=pair, market_cap=market_cap, limiters=limiters)
 
         await asyncio.sleep(request_delay)
 
@@ -583,11 +544,9 @@ async def dexscreener_loop(cfg: dict[str, Any], state: PreMigrationState, root: 
 async def main(config_path: Path) -> None:
     configure_logging()
     load_env()
-
     cfg = load_yaml(config_path)
     root = resolve_path(cfg.get("storage", {}).get("root", RAW_DIR / "premigration"))
     state = PreMigrationState(root / "state.sqlite3")
-
     await asyncio.gather(
         pumpportal_loop(cfg, state, root),
         dexscreener_loop(cfg, state, root),
