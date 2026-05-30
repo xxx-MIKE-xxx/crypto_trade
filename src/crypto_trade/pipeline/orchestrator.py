@@ -315,6 +315,11 @@ def start_holder_snapshots(
                 "save_dir": save_dir,
                 "schedule": holder_cfg.get("schedule"),
                 "largest_accounts": bool(holder_cfg.get("largest_accounts", True)),
+                "token_accounts": holder_cfg.get("token_accounts", "disabled"),
+                "token_accounts_schedule": holder_cfg.get("token_accounts_schedule"),
+                "token_accounts_page_limit": int(holder_cfg.get("token_accounts_page_limit", 100)),
+                "token_accounts_max_pages": int(holder_cfg.get("token_accounts_max_pages", 5)),
+                "token_accounts_max_accounts": int(holder_cfg.get("token_accounts_max_accounts", 500)),
             },
         )
     )
