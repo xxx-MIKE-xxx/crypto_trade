@@ -113,6 +113,7 @@ async def pumpportal_loop(
     event_path = pumpportal_file(cfg)
     event_path.parent.mkdir(parents=True, exist_ok=True)
 
+    initial_offset = event_path.stat().st_size if event_path.exists() else 0
     seen_mints = load_seen_mints_from_jsonl(event_path)
     semaphore = asyncio.Semaphore(cfg.max_concurrent_tokens)
     worker_tasks: set[asyncio.Task[Any]] = set()
@@ -123,6 +124,7 @@ async def pumpportal_loop(
         {
             "pumpportal_file": str(event_path),
             "seen_mints_loaded": len(seen_mints),
+            "initial_offset": initial_offset,
             "max_concurrent_tokens": cfg.max_concurrent_tokens,
         },
     )
@@ -134,6 +136,7 @@ async def pumpportal_loop(
         payload={
             "pumpportal_file": str(event_path),
             "seen_mints_loaded": len(seen_mints),
+            "initial_offset": initial_offset,
             "max_concurrent_tokens": cfg.max_concurrent_tokens,
         },
     )
@@ -145,6 +148,7 @@ async def pumpportal_loop(
             path=event_path,
             owner="main_pipeline",
             url=cfg.pumpportal_url,
+            initial_offset=initial_offset,
             poll_seconds=1,
         ):
             if stop.is_set():
