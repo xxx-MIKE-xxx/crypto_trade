@@ -387,6 +387,18 @@ async def run_optional_analytics(
     analytics_cfg = orch_cfg["analytics"]
     save_dir = analytics_dir(cfg, mint)
     tasks = []
+    if analytics_cfg.get("dexscreener_enrichment_enabled", False):
+        tasks.append(
+            run_stage(
+                cfg=cfg,
+                state=state,
+                sink=sink,
+                mint=mint,
+                stage="dexscreener_enrichment",
+                fn=dexscreener.collect_enrichment,
+                kwargs={"mint": mint, "save_dir": save_dir},
+            )
+        )
     if analytics_cfg["website_enabled"] and meta.get("website"):
         tasks.append(
             run_stage(
