@@ -7,6 +7,14 @@ onchain:
   max_transactions_total: null
   simulate_tx_base64: null
 
+failed_tx_capture:
+  enabled: true
+  log_subscribe: true
+  max_addresses: 6
+  fetch_failed_transactions: true
+  sample_interval_seconds: 60
+  fetches_per_interval: 3
+
 security:
   enabled: true
   cancel_on_red_flags: true
