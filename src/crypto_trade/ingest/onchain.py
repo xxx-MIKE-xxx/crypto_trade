@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
+
+import websockets
 
 from crypto_trade.core.env import load_env
 from crypto_trade.core.io import append_jsonl, save_json
@@ -18,6 +21,60 @@ logger = logging.getLogger(__name__)
 
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 OUTPUT_DIR = ONCHAIN_DIR
+
+FAILED_CATEGORY_HINTS: dict[str, tuple[str, ...]] = {
+    "slippage": (
+        "slippage",
+        "insufficient output",
+        "minimum output",
+        "below minimum",
+        "would buy less",
+        "would sell less",
+    ),
+    "compute_exceeded": (
+        "compute budget exceeded",
+        "computational budget exceeded",
+        "exceeded max instructions",
+    ),
+    "account_in_use": (
+        "account in use",
+        "account already in use",
+        "account borrowed",
+    ),
+    "insufficient_funds": (
+        "insufficient funds",
+        "insufficient lamports",
+        "insufficient balance",
+    ),
+    "liquidity": (
+        "insufficient liquidity",
+        "liquidity",
+        "no route",
+    ),
+    "token_account_error": (
+        "token account",
+        "owner does not match",
+        "frozen",
+        "mint mismatch",
+    ),
+    "blockhash_expired": (
+        "blockhash not found",
+        "block height exceeded",
+    ),
+    "custom_program_error": ("custom program error", "anchorerror"),
+}
+
+FAILED_CATEGORY_SEVERITY: dict[str, int] = {
+    "unknown": 9,
+    "slippage": 8,
+    "liquidity": 8,
+    "compute_exceeded": 7,
+    "account_in_use": 7,
+    "custom_program_error": 6,
+    "insufficient_funds": 4,
+    "token_account_error": 4,
+    "blockhash_expired": 3,
+}
 
 
 def response_row(name: str, response: Any) -> dict[str, Any]:
@@ -112,6 +169,7 @@ async def fetch_signatures_for_address(
     start_ms: int | None = None,
     end_ms: int | None = None,
     max_signatures: int | None = None,
+    status: str = "success",
 ) -> list[str]:
     signatures: list[str] = []
     before = None
@@ -142,8 +200,13 @@ async def fetch_signatures_for_address(
         for row in rows:
             block_time = row.get("blockTime")
             signature = row.get("signature")
+            failed = row.get("err") is not None
 
-            if not signature or row.get("err") is not None:
+            if not signature:
+                continue
+            if status == "success" and failed:
+                continue
+            if status == "failed" and not failed:
                 continue
 
             if end_s is not None and block_time is not None and block_time > end_s:
@@ -179,6 +242,200 @@ async def fetch_transaction(rpc: RPC, signature: str) -> dict[str, Any] | None:
         ],
     )
     return (response.data or {}).get("result")
+
+
+def logs_value(message: dict[str, Any]) -> dict[str, Any]:
+    return (((message.get("params") or {}).get("result") or {}).get("value") or {})
+
+
+def logs_slot(message: dict[str, Any]) -> int | None:
+    return (((message.get("params") or {}).get("result") or {}).get("context") or {}).get("slot")
+
+
+def classify_failed_log(err: Any, logs: list[Any]) -> str:
+    text = " ".join(str(item) for item in [err, *logs]).lower()
+    for category, hints in FAILED_CATEGORY_HINTS.items():
+        if any(hint in text for hint in hints):
+            return category
+    return "unknown"
+
+
+def failed_log_candidate(message: dict[str, Any], watched_address: str) -> dict[str, Any] | None:
+    value = logs_value(message)
+    err = value.get("err")
+    signature = value.get("signature")
+    logs = value.get("logs") or []
+
+    if err is None or not signature:
+        return None
+
+    return {
+        "signature": signature,
+        "slot": logs_slot(message),
+        "err": err,
+        "logs": logs,
+        "watched_address": watched_address,
+        "category": classify_failed_log(err, logs),
+        "local_received_at_ms": now_ms(),
+    }
+
+
+async def stream_logs(
+    rpc: RPC,
+    path: Path,
+    account: str,
+    capture_time: int,
+    candidate_queue: asyncio.Queue[dict[str, Any]],
+    commitment: str = "processed",
+) -> None:
+    params = [
+        {"mentions": [account]},
+        {"commitment": commitment},
+    ]
+    subscribe_msg = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "logsSubscribe",
+        "params": params,
+    }
+    url = f"wss://mainnet.helius-rpc.com/?api-key={rpc.api_key}"
+
+    try:
+        async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+            await ws.send(json.dumps(subscribe_msg))
+            response = json.loads(await ws.recv())
+            append_jsonl(
+                path,
+                {
+                    "type": "subscription_response",
+                    "timestamp": now_ts(),
+                    "local_received_at_ms": now_ms(),
+                    "method": "logsSubscribe",
+                    "watched_address": account,
+                    "params": params,
+                    "data": response,
+                },
+            )
+
+            end_at = asyncio.get_running_loop().time() + capture_time
+            while asyncio.get_running_loop().time() < end_at:
+                timeout = max(0.1, end_at - asyncio.get_running_loop().time())
+                msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                data = json.loads(msg)
+                row = {
+                    "type": "websocket_message",
+                    "timestamp": now_ts(),
+                    "local_received_at_ms": now_ms(),
+                    "method": "logsSubscribe",
+                    "watched_address": account,
+                    "params": params,
+                    "data": data,
+                }
+                append_jsonl(path, row)
+
+                candidate = failed_log_candidate(data, account)
+                if candidate:
+                    try:
+                        candidate_queue.put_nowait(candidate)
+                    except asyncio.QueueFull:
+                        logger.warning("Failed log candidate queue full for %s", account)
+
+    except asyncio.TimeoutError:
+        logger.info("Finished logsSubscribe for %s", account)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("logsSubscribe failed for %s: %s", account, exc)
+        append_jsonl(
+            path,
+            {
+                "type": "websocket_error",
+                "timestamp": now_ts(),
+                "local_received_at_ms": now_ms(),
+                "method": "logsSubscribe",
+                "watched_address": account,
+                "params": params,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+            },
+        )
+
+
+def choose_failed_transaction_samples(
+    candidates: list[dict[str, Any]],
+    already_fetched: set[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    deduped: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        signature = candidate.get("signature")
+        if signature and signature not in already_fetched:
+            deduped.setdefault(signature, candidate)
+
+    category_counts: dict[str, int] = defaultdict(int)
+    for candidate in deduped.values():
+        category_counts[str(candidate.get("category") or "unknown")] += 1
+
+    ranked = sorted(
+        deduped.values(),
+        key=lambda item: (
+            -category_counts[str(item.get("category") or "unknown")],
+            -FAILED_CATEGORY_SEVERITY.get(str(item.get("category") or "unknown"), 1),
+            item.get("local_received_at_ms") or 0,
+        ),
+    )
+    return ranked[: max(0, limit)]
+
+
+async def sample_failed_transactions(
+    rpc: RPC,
+    candidate_queue: asyncio.Queue[dict[str, Any]],
+    path: Path,
+    capture_time: int,
+    interval_seconds: int,
+    fetches_per_interval: int,
+) -> None:
+    fetched: set[str] = set()
+    loop = asyncio.get_running_loop()
+    end_at = loop.time() + capture_time
+
+    while loop.time() < end_at:
+        interval_end = min(end_at, loop.time() + max(1, interval_seconds))
+        candidates: list[dict[str, Any]] = []
+
+        while loop.time() < interval_end:
+            try:
+                candidates.append(
+                    await asyncio.wait_for(
+                        candidate_queue.get(),
+                        timeout=max(0.1, interval_end - loop.time()),
+                    )
+                )
+            except asyncio.TimeoutError:
+                break
+
+        for candidate in choose_failed_transaction_samples(candidates, fetched, fetches_per_interval):
+            signature = str(candidate["signature"])
+            fetched.add(signature)
+            tx = await fetch_transaction(rpc, signature)
+            append_jsonl(
+                path,
+                {
+                    "timestamp": now_ts(),
+                    "local_received_at_ms": now_ms(),
+                    "source": "helius",
+                    "method": "getTransaction",
+                    "signature": signature,
+                    "category": candidate.get("category"),
+                    "watched_address": candidate.get("watched_address"),
+                    "log_slot": candidate.get("slot"),
+                    "log_err": candidate.get("err"),
+                    "log_messages": candidate.get("logs"),
+                    "error_type": None if tx else "not_found",
+                    "error_message": None if tx else "getTransaction returned no result",
+                    "data": tx,
+                },
+            )
 
 
 async def infer_vaults(
@@ -276,6 +533,7 @@ async def backfill_transactions(
             start_ms=start_ms,
             end_ms=end_ms,
             max_signatures=max_signatures_per_address,
+            status="success",
         )
 
         for signature in found:
@@ -398,6 +656,7 @@ async def main(
     token_vault: str | None = None,
     sol_vault: str | None = None,
     backfill_on_cancel: bool = True,
+    failed_tx_capture: dict[str, Any] | None = None,
 ) -> None:
     configure_logging()
     load_env()
@@ -413,6 +672,8 @@ async def main(
     performance_samples_path = out / "performance_samples.jsonl"
     simulated_transactions_path = out / "simulated_transactions.jsonl"
     vault_inference_path = out / "vault_inference.json"
+    logs_path = out / "logs.jsonl"
+    failed_transactions_path = out / "failed_transactions.jsonl"
 
     resolved_watch_accounts = merge_accounts(
         watch_accounts,
@@ -466,6 +727,35 @@ async def main(
                 capture_time=capture_time,
             )
         )
+
+    failed_cfg = failed_tx_capture or {}
+    if failed_cfg.get("enabled", False) and failed_cfg.get("log_subscribe", True):
+        candidate_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=10_000)
+        max_addresses = int(failed_cfg.get("max_addresses", 6))
+        log_addresses = addresses[:max_addresses]
+        for account in log_addresses:
+            tasks.append(
+                stream_logs(
+                    rpc=rpc,
+                    path=logs_path,
+                    account=account,
+                    capture_time=capture_time,
+                    candidate_queue=candidate_queue,
+                    commitment=str(failed_cfg.get("commitment", "processed")),
+                )
+            )
+
+        if failed_cfg.get("fetch_failed_transactions", True):
+            tasks.append(
+                sample_failed_transactions(
+                    rpc=rpc,
+                    candidate_queue=candidate_queue,
+                    path=failed_transactions_path,
+                    capture_time=capture_time,
+                    interval_seconds=int(failed_cfg.get("sample_interval_seconds", 60)),
+                    fetches_per_interval=int(failed_cfg.get("fetches_per_interval", 3)),
+                )
+            )
 
     cancelled = False
 
