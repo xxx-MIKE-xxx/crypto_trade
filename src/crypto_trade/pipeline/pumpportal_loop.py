@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from crypto_trade.core.io import append_jsonl, iter_jsonl
 from crypto_trade.core.time import utc_now, utc_now_iso_ms_z
 from crypto_trade.ingest.bronze import EventSink
-from crypto_trade.ingest.pumpportal import listen
+from crypto_trade.ingest.pumpportal import shared_listen
 from crypto_trade.pipeline.config import PipelineConfig
 from crypto_trade.pipeline.mint import classify_pumpportal_event, extract_mint
 from crypto_trade.pipeline.orchestrator import migrated_token_worker
@@ -53,34 +53,24 @@ def write_orchestrator_event(
 
 def load_seen_mints_from_jsonl(path: Path) -> set[str]:
     seen: set[str] = set()
-
     if not path.exists():
         return seen
-
     for event in iter_jsonl(path):
         event_type = classify_pumpportal_event(event)
-        if event_type not in {"mint", "new_token"}:
-            continue
-
-        mint = extract_mint(event)
-        if mint:
-            seen.add(mint)
-
+        if event_type in {"mint", "new_token"}:
+            mint = extract_mint(event)
+            if mint:
+                seen.add(mint)
     return seen
 
 
 def mint_exists_in_migration_file(path: Path, mint: str) -> bool:
     if not path.exists():
         return False
-
     for event in iter_jsonl(path):
         event_type = classify_pumpportal_event(event)
-        if event_type not in {"mint", "new_token"}:
-            continue
-
-        if extract_mint(event) == mint:
+        if event_type in {"mint", "new_token"} and extract_mint(event) == mint:
             return True
-
     return False
 
 
@@ -104,10 +94,8 @@ async def write_sink_event(
 
 def cleanup_finished_tasks(tasks: set[asyncio.Task[Any]]) -> None:
     finished = {task for task in tasks if task.done()}
-
     for task in finished:
         tasks.discard(task)
-
         try:
             task.result()
         except asyncio.CancelledError:
@@ -153,29 +141,24 @@ async def pumpportal_loop(
     last_event_time = asyncio.get_running_loop().time()
 
     try:
-        async for event in listen(
-            mints=True,
-            migrations=True,
+        async for event, _offset in shared_listen(
+            path=event_path,
+            owner="main_pipeline",
             url=cfg.pumpportal_url,
+            poll_seconds=1,
         ):
             if stop.is_set():
                 break
 
             cleanup_finished_tasks(worker_tasks)
-
             now = asyncio.get_running_loop().time()
             if now - last_event_time >= cfg.heartbeat_seconds:
                 write_orchestrator_event(
                     cfg,
                     "pumpportal_heartbeat",
-                    {
-                        "active_workers": len(worker_tasks),
-                        "seen_mints": len(seen_mints),
-                    },
+                    {"active_workers": len(worker_tasks), "seen_mints": len(seen_mints)},
                 )
                 last_event_time = now
-
-            append_jsonl(event_path, event)
 
             event_type = classify_pumpportal_event(event)
             mint = extract_mint(event)
@@ -203,23 +186,15 @@ async def pumpportal_loop(
                 write_orchestrator_event(
                     cfg,
                     "pumpportal_event_missing_mint",
-                    {"event_type": event_type, "event": event},
+                    {"event_type": event_type},
                     level="warning",
                 )
                 continue
 
             if event_type in {"mint", "new_token"}:
                 seen_mints.add(mint)
-                state.upsert_new_token(
-                    mint,
-                    cfg.data_root / "raw" / "migrations" / mint,
-                )
-                write_orchestrator_event(
-                    cfg,
-                    "mint_seen",
-                    {"event_type": event_type},
-                    mint=mint,
-                )
+                state.upsert_new_token(mint, cfg.data_root / "raw" / "migrations" / mint)
+                write_orchestrator_event(cfg, "mint_seen", {"event_type": event_type}, mint=mint)
                 continue
 
             if event_type != "migration":
@@ -234,19 +209,11 @@ async def pumpportal_loop(
                 )
                 continue
 
-            mint_was_seen = mint in seen_mints or mint_exists_in_migration_file(
-                event_path,
-                mint,
-            )
-
-            if not mint_was_seen:
+            if not (mint in seen_mints or mint_exists_in_migration_file(event_path, mint)):
                 write_orchestrator_event(
                     cfg,
                     "migration_skipped_missing_mint_event",
-                    {
-                        "reason": "migration event received, but matching mint/create event was not captured",
-                        "event": event,
-                    },
+                    {"reason": "matching mint/create event was not captured"},
                     mint=mint,
                     level="warning",
                 )
@@ -255,21 +222,12 @@ async def pumpportal_loop(
                     source="pipeline",
                     event_type="migration_skipped_missing_mint_event",
                     mint=mint,
-                    payload={
-                        "reason": "matching mint/create event was not captured",
-                        "migration_event": event,
-                    },
+                    payload={"reason": "matching mint/create event was not captured"},
                     level="warning",
                 )
                 continue
 
-            write_orchestrator_event(
-                cfg,
-                "migration_accepted_worker_started",
-                {"event": event},
-                mint=mint,
-            )
-
+            write_orchestrator_event(cfg, "migration_accepted_worker_started", {}, mint=mint)
             task = asyncio.create_task(
                 migrated_token_worker(
                     cfg=cfg,
@@ -288,14 +246,7 @@ async def pumpportal_loop(
             "pumpportal_loop_stopping",
             {"active_workers": len(worker_tasks)},
         )
-
         if worker_tasks:
             await asyncio.gather(*worker_tasks, return_exceptions=True)
-
         await sink.flush()
-
-        write_orchestrator_event(
-            cfg,
-            "pumpportal_loop_stopped",
-            {"active_workers": 0},
-        )
+        write_orchestrator_event(cfg, "pumpportal_loop_stopped", {"active_workers": 0})
